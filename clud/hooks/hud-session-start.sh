@@ -21,7 +21,7 @@ main() {
 
     local session_id
     session_id=$(jq -r '.session_id // empty' <<<"$input")
-    [ -z "$session_id" ] && { hud_log_error "missing session_id"; return 0; }
+    hud_validate_session_id "$session_id" || return 0
 
     local cwd transcript_path now tty
     cwd=$(jq -r '.cwd // ""' <<<"$input")

@@ -42,3 +42,38 @@ def test_writes_meta_and_tty_map(state_dir: Path) -> None:
 def test_corrupt_input_does_not_crash(state_dir: Path) -> None:
     res = run_hook("hud-session-start.sh", {}, state_dir, ppid_tty="ttys003")
     assert res.returncode == 0
+    # No session_id → no meta.json should be written, and no tty-map entry either.
+    assert not (state_dir / "sessions").exists()
+    assert not (state_dir / "tty-map.json").exists()
+
+
+def test_no_tty_skips_tty_map(state_dir: Path) -> None:
+    """When the hook runs in a no-tty context (daemon, CI), it must still
+    write meta.json but skip the tty-map entry — the map is for resolving
+    iTerm panes back to sessions, and a sessionless context can't be focused."""
+    payload = {
+        "session_id": "abc-123",
+        "source": "startup",
+        "transcript_path": "/tmp/t.jsonl",
+        "cwd": "/proj",
+    }
+    res = run_hook("hud-session-start.sh", payload, state_dir, ppid_tty="?")
+    assert res.returncode == 0
+    assert (state_dir / "sessions/abc-123/meta.json").exists()
+    assert not (state_dir / "tty-map.json").exists()
+
+
+def test_path_traversal_session_id_rejected(state_dir: Path) -> None:
+    """A session_id containing path separators must NOT cause meta.json to
+    be written outside sessions/ — the hook should log and bail."""
+    payload = {
+        "session_id": "../etc/passwd",
+        "cwd": "/proj",
+        "transcript_path": "",
+    }
+    res = run_hook("hud-session-start.sh", payload, state_dir, ppid_tty="ttys003")
+    assert res.returncode == 0
+    # Nothing under sessions/, no etc/passwd/, no tty-map entry.
+    assert not (state_dir / "sessions").exists()
+    assert not (state_dir / "etc").exists()
+    assert not (state_dir / "tty-map.json").exists()

@@ -113,6 +113,23 @@ hud_map_edit() {
     hud_atomic_write "$map" "$next"
 }
 
+# Validate a session_id is safe to use as a path component. Logs and returns
+# non-zero if it contains a path separator. Claude generates UUIDs in
+# production; this catches malformed payloads / test harness mistakes
+# before they misplace state files inside HUD_STATE_DIR.
+hud_validate_session_id() {
+    case "$1" in
+        */* | *\\*)
+            hud_log_error "invalid session_id (contains path separator): $1"
+            return 1
+            ;;
+        "")
+            return 1
+            ;;
+    esac
+    return 0
+}
+
 # Wrap any hook body so it never fails the parent (Claude). Logs errors and
 # exits 0. Stderr from the body is captured line-by-line and routed to
 # the error log so we don't lose diagnostic info.
