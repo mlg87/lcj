@@ -40,6 +40,7 @@ def run_hook(name: str, payload: dict[str, Any], state_dir: Path,
         input=json.dumps(payload),
         capture_output=True,
         text=True,
+        timeout=10,
         env={
             "HUD_STATE_DIR": str(state_dir),
             "HUD_TTY_OVERRIDE": ppid_tty,

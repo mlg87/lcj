@@ -18,7 +18,7 @@ typecheck:
 	mypy plugin
 
 shellcheck:
-	shellcheck hooks/*.sh
+	@if ls hooks/*.sh 1>/dev/null 2>&1; then shellcheck hooks/*.sh; else echo "shellcheck: no hooks yet, skipping"; fi
 
 check: lint typecheck shellcheck test
 
