@@ -1,0 +1,47 @@
+# clud/pyproject.toml
+# Project metadata + tooling config for the Claude HUD plugin.
+# Lives at the project root (clud/), not the repo root, because lcj/ is
+# a monorepo of independent skills/plugins each with their own toolchain.
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "claude-hud"
+version = "0.1.0"
+requires-python = ">=3.12"
+# Runtime deps for the iTerm Python plugin. iterm2 is the official
+# binding for iTerm's WebSocket Python API; aiohttp powers our local
+# HTTP server that hosts the webview + SSE push channel.
+dependencies = [
+    "aiohttp>=3.9",
+    "iterm2>=2.7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.5",
+    "mypy>=1.10",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["plugin"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "RUF"]
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+
+[tool.pytest.ini_options]
+# asyncio_mode=auto lets us write `async def test_*` without per-test markers.
+asyncio_mode = "auto"
+testpaths = ["tests"]
