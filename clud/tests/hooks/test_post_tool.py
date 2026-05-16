@@ -6,6 +6,7 @@ Behavior:
     sessions/<id>/todos.json. WHY only TodoWrite: that's the canonical
     write event for Claude's todo state; everything else leaves todos alone.
 """
+
 from __future__ import annotations
 
 import json
@@ -37,9 +38,9 @@ def test_clears_current_after_any_tool(state_dir: Path) -> None:
 def test_todowrite_writes_todos(state_dir: Path) -> None:
     _seed_session(state_dir)
     todos = [
-        {"content": "A", "status": "completed",   "activeForm": "Doing A"},
+        {"content": "A", "status": "completed", "activeForm": "Doing A"},
         {"content": "B", "status": "in_progress", "activeForm": "Doing B"},
-        {"content": "C", "status": "pending",     "activeForm": "Doing C"},
+        {"content": "C", "status": "pending", "activeForm": "Doing C"},
     ]
     payload = {
         "session_id": "abc-123",
@@ -56,7 +57,8 @@ def test_todowrite_writes_todos(state_dir: Path) -> None:
 def test_non_todowrite_does_not_touch_todos(state_dir: Path) -> None:
     sd = _seed_session(state_dir)
     (sd / "todos.json").write_text(
-        '{"updated_at":1,"todos":[{"content":"X","status":"pending","activeForm":""}]}')
+        '{"updated_at":1,"todos":[{"content":"X","status":"pending","activeForm":""}]}'
+    )
     payload = {
         "session_id": "abc-123",
         "tool_name": "Bash",

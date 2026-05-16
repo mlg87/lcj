@@ -8,6 +8,7 @@ input_summary is computed in the hook (not the plugin) to keep the
 plugin tool-agnostic — adding support for a new tool means only editing
 the hook's case statement.
 """
+
 from __future__ import annotations
 
 import json

@@ -4,6 +4,7 @@ The hook-test helper (`run_hook`) invokes the actual bash scripts via
 subprocess.run, with HUD_STATE_DIR pointed at a tmp dir. This keeps tests
 hermetic without requiring us to reimplement the hook behavior in Python.
 """
+
 from __future__ import annotations
 
 import json
@@ -25,8 +26,9 @@ def state_dir(tmp_path: Path) -> Path:
     return d
 
 
-def run_hook(name: str, payload: dict[str, Any], state_dir: Path,
-             ppid_tty: str = "ttys999") -> subprocess.CompletedProcess[str]:
+def run_hook(
+    name: str, payload: dict[str, Any], state_dir: Path, ppid_tty: str = "ttys999"
+) -> subprocess.CompletedProcess[str]:
     """Invoke a hook script with stdin JSON and an isolated state dir.
 
     `ppid_tty` simulates the value `ps -o tty= -p $PPID` would return for

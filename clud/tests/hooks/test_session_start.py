@@ -7,6 +7,7 @@ can later resolve the focused iTerm pane's tty back to this session_id.
 The hook must always exit 0 — even on garbage input — because Claude
 must not break if the HUD is broken.
 """
+
 from __future__ import annotations
 
 import json
@@ -22,8 +23,7 @@ def test_writes_meta_and_tty_map(state_dir: Path) -> None:
         "transcript_path": "/tmp/transcript.jsonl",
         "cwd": "/Users/me/proj",
     }
-    res = run_hook("hud-session-start.sh", payload, state_dir,
-                   ppid_tty="ttys003")
+    res = run_hook("hud-session-start.sh", payload, state_dir, ppid_tty="ttys003")
 
     assert res.returncode == 0, res.stderr
 
