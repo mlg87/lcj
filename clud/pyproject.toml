@@ -41,6 +41,10 @@ select = ["E", "F", "I", "B", "UP", "RUF"]
 strict = true
 python_version = "3.12"
 
+[[tool.mypy.overrides]]
+module = "iterm2.*"
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 # asyncio_mode=auto lets us write `async def test_*` without per-test markers.
 asyncio_mode = "auto"
