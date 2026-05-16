@@ -43,6 +43,9 @@ class TtyResolver:
 
     def gc_dead_sessions(self) -> None:
         """Remove tty-map entries whose claude_pid is no longer running."""
+        # NOTE: does not hold the bash mkdir lock used by hud_map_edit, so a
+        # concurrent SessionStart write may have its entry lost. Window is small
+        # (GC runs every ~12s) and the next SessionStart re-fire heals it.
         map_path = self._dir / "tty-map.json"
         try:
             current = json.loads(map_path.read_text())

@@ -52,9 +52,8 @@ cat <<EOF
 3. Activate that venv and install the runtime deps:
      source "$PLUGIN_DEST/iterm2env/versions/"*/bin/activate
      pip install aiohttp iterm2
-4. Move iTerm's generated launcher out of the way (we use our own):
-     mv "$PLUGIN_DEST/claude_hud.py" "$PLUGIN_DEST/.claude_hud.iterm.bak" 2>/dev/null || true
-     ln -sf "$PLUGIN_DEST/claude_hud.py" "$PLUGIN_DEST/main.py"
+4. Tell iTerm to run our claude_hud.py as the launcher:
+     ln -sf claude_hud.py "$PLUGIN_DEST/main.py"
 5. Restart iTerm. View → Toolbelt → check "Claude HUD".
 EOF
 

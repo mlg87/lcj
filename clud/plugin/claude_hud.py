@@ -35,6 +35,7 @@ Failure modes:
 from __future__ import annotations
 
 import asyncio
+import calendar
 import json
 import logging
 import sys
@@ -45,9 +46,9 @@ from typing import Any
 import iterm2
 from iterm2.tool import async_register_web_view_tool
 
-from plugin.hud_server import HudServer
-from plugin.state_reader import StateReader
-from plugin.tty_resolver import TtyResolver
+from .hud_server import HudServer
+from .state_reader import StateReader
+from .tty_resolver import TtyResolver
 
 STATE_DIR = Path("~/.claude/state/hud").expanduser()
 POLL_INTERVAL_S = 0.2
@@ -179,7 +180,7 @@ def _count_hook_errors(state_dir: Path) -> int:
                 # Lines start with ISO-8601 UTC: "2026-05-15T19:51:13Z [hook] msg"
                 try:
                     ts_str = line.split(" ", 1)[0]
-                    ts = time.mktime(time.strptime(ts_str, "%Y-%m-%dT%H:%M:%SZ"))
+                    ts = calendar.timegm(time.strptime(ts_str, "%Y-%m-%dT%H:%M:%SZ"))
                     if ts >= cutoff:
                         count += 1
                 except (ValueError, IndexError):

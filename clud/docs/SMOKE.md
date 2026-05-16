@@ -9,7 +9,8 @@ Run after any change to hooks or plugin. Takes ~2 minutes.
    - Verify "no Claude session in this tab" empty state in a fresh tab.
 
 3. **Run `claude`** in the tab.
-   - Verify session header (model, project basename) appears within ~200ms.
+   - Verify session header (project basename) appears within ~200ms.
+   - Model will show "?" — the SessionStart hook payload doesn't expose the model name as of writing. Not a bug.
 
 4. **Trigger any tool call** (e.g. ask Claude to `git status`).
    - Verify `▶ Bash · Xs` appears in the "current" line and clears when the tool returns.
