@@ -5,3 +5,8 @@ __pycache__/
 *.pyc
 .venv/
 .env
+
+# Superpowers brainstorm/spec/plan artifacts live alongside their project
+# but are NOT version-controlled — implementation code is the source of truth,
+# and code is expected to be self-documenting via comments and module docstrings.
+**/docs/superpowers/
