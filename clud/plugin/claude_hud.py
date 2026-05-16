@@ -44,11 +44,17 @@ from pathlib import Path
 from typing import Any
 
 import iterm2
-from iterm2.tool import async_register_web_view_tool
 
-from .hud_server import HudServer
-from .state_reader import StateReader
-from .tty_resolver import TtyResolver
+# Absolute imports (no `from .X`) so this works both ways:
+#   - Dev: pytest discovers modules via `plugin/` being on sys.path; mypy
+#     finds them via `mypy_path = ["plugin"]` in pyproject.
+#   - iTerm runtime: `main.py` is a symlink to this file. When iTerm runs it
+#     as a script, sys.path[0] is the script's own directory, so sibling
+#     modules import by bare name.
+from hud_server import HudServer  # type: ignore[import-not-found]
+from iterm2.tool import async_register_web_view_tool
+from state_reader import StateReader  # type: ignore[import-not-found]
+from tty_resolver import TtyResolver  # type: ignore[import-not-found]
 
 STATE_DIR = Path("~/.claude/state/hud").expanduser()
 POLL_INTERVAL_S = 0.2
