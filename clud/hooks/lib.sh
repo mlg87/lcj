@@ -37,6 +37,7 @@ hud_log_error() {
 
 # Atomic JSON write: writes to a sibling tmp file in the same dir, then renames.
 # Same-filesystem rename is required for atomicity, hence the sibling tmp.
+# trap RETURN cleans up the tmp file if we bail before the rename succeeds.
 hud_atomic_write() {
     local dest="$1"
     local content="$2"
@@ -45,6 +46,8 @@ hud_atomic_write() {
     mkdir -p "$dir"
     local tmp
     tmp=$(mktemp "$dir/.tmp.XXXXXX")
+    # shellcheck disable=SC2064
+    trap "rm -f '$tmp'" RETURN
     printf '%s' "$content" > "$tmp"
     mv -f "$tmp" "$dest"
 }
@@ -65,24 +68,49 @@ hud_tty() {
     esac
 }
 
-# Edit tty-map.json under flock. Args:
+# Edit tty-map.json under a portable mkdir-based lock. mkdir is atomic on POSIX
+# filesystems, unlike flock(1) which doesn't ship with macOS by default.
+# Args:
 #   $1 = jq filter operating on the current map (object)
 #   remaining args = jq --arg / --argjson pairs forwarded as-is
 hud_map_edit() {
     local filter="$1"; shift
-    local map
+    local map lockdir
     map="$(hud_state_dir)/tty-map.json"
-    local lock="$map.lock"
+    lockdir="$map.lock.d"
     mkdir -p "$(dirname "$map")"
-    : >> "$lock"  # touch the lockfile so flock has a target
-    (
-        flock 9
-        local current="{}"
-        [ -s "$map" ] && current=$(cat "$map")
-        local next
-        next=$(jq "$filter" "$@" <<<"$current") || return 1
-        hud_atomic_write "$map" "$next"
-    ) 9>"$lock"
+
+    # Spin until we acquire the lock. Sessions start/end rarely so contention
+    # is essentially zero; the bound is a safety net against an orphaned lock
+    # from a crashed hook (cleared by stale-lock detection below).
+    local waited=0
+    while ! mkdir "$lockdir" 2>/dev/null; do
+        # Stale-lock guard: a lockdir older than 10s almost certainly belongs
+        # to a crashed hook. Reclaim it.
+        if [ -d "$lockdir" ] && [ "$(find "$lockdir" -maxdepth 0 -mmin +0 2>/dev/null)" ]; then
+            local age
+            age=$(( $(date +%s) - $(stat -f %m "$lockdir" 2>/dev/null || echo 0) ))
+            if [ "$age" -gt 10 ]; then
+                rm -rf "$lockdir"
+                continue
+            fi
+        fi
+        sleep 0.05
+        waited=$((waited + 1))
+        # Safety bail: don't spin forever
+        if [ "$waited" -gt 200 ]; then
+            hud_log_error "hud_map_edit: lock acquisition timeout"
+            return 1
+        fi
+    done
+    # shellcheck disable=SC2064
+    trap "rm -rf '$lockdir'" RETURN
+
+    local current="{}"
+    [ -s "$map" ] && current=$(cat "$map")
+    local next
+    next=$(jq "$filter" "$@" <<<"$current") || return 1
+    hud_atomic_write "$map" "$next"
 }
 
 # Wrap any hook body so it never fails the parent (Claude). Logs errors and
