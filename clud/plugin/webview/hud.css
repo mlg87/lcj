@@ -1,0 +1,111 @@
+/*
+ * clud/plugin/webview/hud.css
+ *
+ * iTerm toolbelt theme — terminal-monospace aesthetic, dark by default.
+ * The toolbelt panel is narrow (~200-300px) so layout favors vertical
+ * stacking and tight spacing.
+ */
+:root {
+  --bg: #0d0d0d;
+  --panel: #181818;
+  --border: #2a2a2a;
+  --muted: #666;
+  --text: #ccc;
+  --accent: #9af;
+  --running: #fa0;
+  --done: #7c7;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 12px/1.45 ui-monospace, Menlo, monospace;
+  height: 100%;
+}
+
+.hud { padding: 12px; }
+/* CSS-driven state toggle — no JS needed to swap which section shows. */
+.hud[data-state="empty"] .session { display: none; }
+.hud[data-state="ready"] .empty   { display: none; }
+
+.empty {
+  color: var(--muted);
+  padding: 24px 8px;
+  text-align: center;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--muted);
+  margin-bottom: 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+.header .model { color: var(--accent); font-weight: bold; }
+
+.current {
+  background: #161616;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  margin-bottom: 12px;
+  display: grid;
+  grid-template-columns: auto auto 1fr auto;
+  gap: 6px;
+  align-items: center;
+}
+.current.hidden { display: none; }
+.current .indicator { color: var(--running); }
+.current .tool      { color: var(--text); font-weight: bold; }
+.current .summary   { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.current .elapsed   { color: var(--running); font-variant-numeric: tabular-nums; }
+
+.todos-header {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  color: var(--accent);
+  margin-bottom: 4px;
+}
+.todos-header .count { color: var(--muted); }
+
+.progress {
+  background: #222;
+  height: 4px;
+  border-radius: 2px;
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+.progress .bar {
+  height: 100%;
+  background: var(--done);
+  transition: width 200ms ease-out;
+}
+
+.todos {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.todos li { padding: 2px 0; }
+.todos li[data-status="completed"]   { color: var(--done);    text-decoration: line-through; }
+.todos li[data-status="in_progress"] { color: var(--running); font-weight: bold; }
+.todos li[data-status="pending"]     { color: var(--muted); }
+/* Status icon comes from the data-icon attribute set by JS — pure CSS,
+   no innerHTML, no XSS surface. */
+.todos li::before { content: attr(data-icon) " "; }
+
+.footer {
+  margin-top: 12px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+  font-size: 10px;
+  color: var(--muted);
+}

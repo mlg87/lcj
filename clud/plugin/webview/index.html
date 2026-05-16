@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Claude HUD</title>
+  <link rel="stylesheet" href="hud.css">
+</head>
+<body>
+  <!--
+    The HUD has two visual states, toggled via data-state on <main>:
+      - "empty" → focused tab is not running Claude; show the empty section
+      - "ready" → focused tab has a Claude session; show the session section
+    JS sets data-state and patches all the textual nodes in place.
+  -->
+  <main id="hud" class="hud" data-state="empty">
+    <section class="empty">
+      <p>No Claude session in this tab.</p>
+    </section>
+
+    <section class="session">
+      <header class="header">
+        <span id="model" class="model">—</span>
+        <span id="project" class="project">—</span>
+      </header>
+      <div id="current" class="current hidden">
+        <span class="indicator">▶</span>
+        <span id="current-name" class="tool"></span>
+        <span id="current-summary" class="summary"></span>
+        <span id="current-elapsed" class="elapsed"></span>
+      </div>
+      <div class="todos-wrap">
+        <div class="todos-header">
+          <span class="label">Todos</span>
+          <span id="todos-count" class="count">0/0</span>
+        </div>
+        <div id="progress" class="progress"><div id="progress-bar" class="bar"></div></div>
+        <ul id="todos" class="todos"></ul>
+      </div>
+      <footer class="footer">
+        <span id="last-updated" class="last-updated">—</span>
+      </footer>
+    </section>
+  </main>
+  <script src="hud.js"></script>
+</body>
+</html>
