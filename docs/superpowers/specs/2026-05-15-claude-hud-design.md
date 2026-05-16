@@ -78,15 +78,15 @@ Configured in `~/.claude/settings.json`:
 | `PostToolUse` (any) | `{session_id, tool_name, tool_input, tool_response, ...}` | Clears `current.json`. **If `tool_name == "TodoWrite"`** also writes `sessions/<id>/todos.json` from `tool_input.todos` |
 | `SessionEnd` | `{session_id, reason, ...}` | Removes `tty-map.json` entry, sets `meta.json.ended_at` |
 
-**TTY discovery:** hooks resolve the controlling terminal via `ps -o tty= -p $PPID` (Claude is the parent), normalized to short form like `s003`. iTerm2's Python API returns the same short form via `Session.tty`, so they line up cleanly.
+**TTY discovery:** hooks resolve the controlling terminal via `ps -o tty= -p $PPID` (Claude is the parent), then normalize to the full `/dev/ttys003` form to match what iTerm returns. iTerm2's Python API exposes the tty as the `tty` session variable (`await session.async_get_variable("tty")`), which returns `/dev/ttys003`-style strings.
 
 ## Layer 2 — Filesystem state contract
 
 ```jsonc
 // ~/.claude/state/hud/tty-map.json
 {
-  "s003": {"session_id": "abc-123", "claude_pid": 12345, "started_at": 1736000000},
-  "s004": {"session_id": "def-456", "claude_pid": 67890, "started_at": 1736000100}
+  "/dev/ttys003": {"session_id": "abc-123", "claude_pid": 12345, "started_at": 1736000000},
+  "/dev/ttys004": {"session_id": "def-456", "claude_pid": 67890, "started_at": 1736000100}
 }
 
 // ~/.claude/state/hud/sessions/<id>/meta.json
@@ -158,7 +158,7 @@ async def main(connection):
     last_snapshot = None
     while True:
         focused = app.current_terminal_window.current_tab.current_session
-        tty = await focused.async_get_variable("session.tty")
+        tty = await focused.async_get_variable("tty")          # e.g. "/dev/ttys003"
         snapshot = state_reader.snapshot_for_tty(tty)         # None if not Claude
         if snapshot != last_snapshot:
             await server.push(snapshot)
@@ -172,7 +172,7 @@ iterm2.run_forever(main)
 
 ```jsonc
 {
-  "tty": "s003",
+  "tty": "/dev/ttys003",
   "session": {"id": "abc-123", "model": "claude-opus-4-7", "project": "…/mulligan"} | null,
   "current": {"tool_name": "Bash", "input_summary": "git rev-parse HEAD", "running_for_ms": 2300} | null,
   "todos":   [{"content": "…", "status": "completed" | "in_progress" | "pending"}, ...]
