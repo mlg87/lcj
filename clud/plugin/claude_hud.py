@@ -105,7 +105,11 @@ async def main(connection: iterm2.Connection) -> None:  # type: ignore[name-defi
         try:
             tty = await _focused_tty(app)
             normalized = resolver.normalize(tty)
-            snapshot = reader.snapshot_for_tty(normalized)
+            # Multi-session shape: render every live Claude session as its
+            # own card and tag the one that owns the currently-focused pane.
+            # Each card's snapshot is the same dict snapshot_for_tty used to
+            # return; the webview reads `sessions[]` and matches `focused_tty`.
+            snapshot = reader.snapshot_all(normalized)
             if snapshot != last_snapshot:
                 await server.push(snapshot)
                 last_snapshot = snapshot
@@ -126,16 +130,22 @@ async def main(connection: iterm2.Connection) -> None:  # type: ignore[name-defi
             try:
                 hook_error_count = _count_hook_errors(STATE_DIR)
                 tty_map_size = _tty_map_size(STATE_DIR)
+                # snapshot is now multi-session: extract focused session_id
+                # by matching the focused_tty against each session's tty.
+                resolved = None
+                if snapshot:
+                    for s in snapshot.get("sessions", []):
+                        if s.get("tty") == snapshot.get("focused_tty"):
+                            sess = s.get("session") or {}
+                            resolved = sess.get("id")
+                            break
                 _write_diagnostics(
                     STATE_DIR,
                     {
                         "plugin_started_at": started_at,
                         "focused_tty": tty,
-                        "resolved_session_id": (
-                            snapshot["session"]["id"]
-                            if snapshot and snapshot.get("session")
-                            else None
-                        ),
+                        "resolved_session_id": resolved,
+                        "session_count": len(snapshot.get("sessions", [])) if snapshot else 0,
                         "last_snapshot_pushed_at": last_pushed_at,
                         "hook_error_count_24h": hook_error_count,
                         "tty_map_size": tty_map_size,
