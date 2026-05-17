@@ -3,15 +3,19 @@
  *
  * iTerm toolbelt theme — terminal-monospace aesthetic, dark by default.
  * The toolbelt panel is narrow (~200-300px) so layout favors vertical
- * stacking and tight spacing.
+ * stacking and tight spacing. Multi-session HUD: each Claude session
+ * renders as its own .card; the focused one gets a brighter accent.
  */
 :root {
   --bg: #0d0d0d;
   --panel: #181818;
+  --panel-focused: #1c1c1c;
   --border: #2a2a2a;
+  --border-focused: #3a3a3a;
   --muted: #666;
   --text: #ccc;
   --accent: #9af;
+  --accent-dim: #557;
   --running: #fa0;
   --done: #7c7;
 }
@@ -27,10 +31,10 @@ html, body {
   height: 100%;
 }
 
-.hud { padding: 12px; }
+.hud { padding: 8px; }
 /* CSS-driven state toggle — no JS needed to swap which section shows. */
-.hud[data-state="empty"] .session { display: none; }
-.hud[data-state="ready"] .empty   { display: none; }
+.hud[data-state="empty"] .sessions { display: none; }
+.hud[data-state="ready"] .empty    { display: none; }
 
 .empty {
   color: var(--muted);
@@ -38,12 +42,33 @@ html, body {
   text-align: center;
 }
 
+.sessions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* One card per Claude session. The focused one stands out with a brighter
+   accent + slightly lighter panel so the user knows which tab they're in. */
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent-dim);
+  border-radius: 4px;
+  padding: 8px;
+}
+.card[data-focused="1"] {
+  background: var(--panel-focused);
+  border-color: var(--border-focused);
+  border-left-color: var(--accent);
+}
+
 .header {
   display: flex;
   justify-content: space-between;
   font-size: 10px;
   color: var(--muted);
-  margin-bottom: 10px;
+  margin-bottom: 8px;
   padding-bottom: 6px;
   border-bottom: 1px solid var(--border);
 }
@@ -54,7 +79,7 @@ html, body {
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 6px 8px;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
   display: grid;
   grid-template-columns: auto auto 1fr auto;
   gap: 6px;
@@ -66,7 +91,8 @@ html, body {
 .current .summary   { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .current .elapsed   { color: var(--running); font-variant-numeric: tabular-nums; }
 
-.todos-header {
+/* Shared section heading style — used by both Todos and Sub-agents. */
+.section-header {
   display: flex;
   justify-content: space-between;
   font-size: 10px;
@@ -74,13 +100,40 @@ html, body {
   color: var(--accent);
   margin-bottom: 4px;
 }
-.todos-header .count { color: var(--muted); }
+.section-header .count { color: var(--muted); }
+
+.subagents-wrap { margin-bottom: 10px; }
+.subagents-wrap.hidden { display: none; }
+.subagents {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.subagent {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas:
+    "desc elapsed"
+    "meta meta";
+  gap: 2px 6px;
+  padding: 4px 6px;
+  margin-bottom: 4px;
+  background: #161616;
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--accent);
+  border-radius: 3px;
+}
+.subagent[data-bg="1"] { border-left-color: var(--running); }
+.subagent .desc    { grid-area: desc;    color: var(--text); font-weight: bold;
+                     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.subagent .meta    { grid-area: meta;    color: var(--muted); font-size: 10px; }
+.subagent .elapsed { grid-area: elapsed; color: var(--running); font-variant-numeric: tabular-nums; }
 
 .progress {
   background: #222;
   height: 4px;
   border-radius: 2px;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
   overflow: hidden;
 }
 .progress .bar {
@@ -103,9 +156,10 @@ html, body {
 .todos li::before { content: attr(data-icon) " "; }
 
 .footer {
-  margin-top: 12px;
+  margin-top: 10px;
   padding-top: 6px;
   border-top: 1px solid var(--border);
   font-size: 10px;
   color: var(--muted);
+  text-align: right;
 }
