@@ -83,28 +83,40 @@ function render(snapshot) {
 function renderCard(card, snap, focused) {
   card.dataset.focused = focused ? "1" : "0";
 
-  // Header label is the primary identifier (issue #5): session name first
-  // (set via `claude -n` or `/rename`), then project basename, then a
-  // last-resort "(unnamed)". The old `<model> · <project>` header rendered
-  // "? · lcj" for nearly every card because the SessionStart hook payload
-  // doesn't expose the model — and that was nearly useless for users with
-  // multiple sessions in the same project.
+  // Header is three tokens: project · session-name · model.
+  //   .label  always shows the project basename so the user knows which
+  //           repo a card belongs to at a glance — disambiguates two
+  //           cards from the same project, and stays useful before the
+  //           session is ever renamed.
+  //   .name   shows the /rename or `claude -n` value when set. CSS adds
+  //           the " · " separator via ::before, so toggling data-has-name
+  //           hides both the dot and the span when no name exists.
+  //   .model  same pattern for the model. Hidden when SessionStart didn't
+  //           supply one — never render a bare "?".
+  // If the project is somehow unknown (shouldn't happen in practice — the
+  // SessionStart hook captures cwd), we promote the name (or "(unnamed)")
+  // into .label so the header still has *something* to identify the card.
   const session = snap.session || {};
-  const label = session.name || basename(session.project) || "(unnamed)";
-  card.querySelector("header .label").textContent = label;
-
-  // Model is the secondary token. CSS adds the " · " separator via
-  // .model::before; we toggle data-has-model so both separator and span
-  // hide when the model is unknown — no bare "?" ever.
-  const header = card.querySelector("header");
+  const project = basename(session.project);
+  const name = session.name;
   const model = session.model;
-  if (model) {
-    header.dataset.hasModel = "1";
-    card.querySelector("header .model").textContent = model;
-  } else {
-    header.dataset.hasModel = "0";
-    card.querySelector("header .model").textContent = "";
-  }
+
+  const labelText = project || name || "(unnamed)";
+  // Only show the secondary .name when .label is the project — otherwise
+  // we'd render the name twice. Also suppress when the rename happens to
+  // equal the project basename, since that's just visual noise.
+  const showName = !!project && !!name && name !== project;
+
+  const labelEl = card.querySelector("header .label");
+  const nameEl  = card.querySelector("header .name");
+  const modelEl = card.querySelector("header .model");
+  const header  = card.querySelector("header");
+
+  labelEl.textContent = labelText;
+  nameEl.textContent  = showName ? name : "";
+  modelEl.textContent = model || "";
+  header.dataset.hasName  = showName ? "1" : "0";
+  header.dataset.hasModel = model    ? "1" : "0";
 
   const currentEl = card.querySelector(".current");
   if (snap.current) {
