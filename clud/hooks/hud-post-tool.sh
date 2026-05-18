@@ -57,9 +57,18 @@ todos_apply_task_create() {
     description=$(jq -r '.tool_input.description // ""' <<<"$input")
     # No id ⇒ we can't track this task across updates; skip silently.
     [ -z "$id" ] && return 0
+    # Auto-clear (PR #?): if every existing row is already `completed`, the
+    # next TaskCreate is the start of a logically *new* batch — drop the
+    # stale list before appending. We use `map(.status) | unique == ["completed"]`
+    # which is false on an empty list (unique returns []) and on any mixed
+    # list, so this only fires when there's a fully-completed batch to clear.
+    # Mid-workflow appends (any pending/in_progress row present) are untouched.
     # shellcheck disable=SC2016  # $now/$id/$subject/etc. are jq bindings, not shell vars
     todos_mutate "$session_dir" \
         '.updated_at = $now
+         | (if (.todos | map(.status) | unique) == ["completed"]
+            then .todos = []
+            else . end)
          | .todos += [{
              id: $id,
              content: $subject,

@@ -105,12 +105,18 @@ def test_taskcreate_appends_to_empty_todos(state_dir: Path) -> None:
 
 
 def test_taskcreate_appends_to_existing_todos(state_dir: Path) -> None:
+    """Mid-workflow append: existing list has a non-completed row so the
+    auto-clear must NOT fire; the new task lands at the tail."""
     sd = _seed_session(state_dir)
     (sd / "todos.json").write_text(
         json.dumps(
             {
                 "updated_at": 1,
-                "todos": [{"id": "1", "content": "A", "status": "completed", "activeForm": ""}],
+                # `pending` (not completed) — otherwise the auto-clear logic
+                # would treat this as the start of a fresh batch. See
+                # test_taskcreate_resets_when_previous_list_all_completed
+                # for that path.
+                "todos": [{"id": "1", "content": "A", "status": "pending", "activeForm": ""}],
             }
         )
     )
@@ -125,6 +131,109 @@ def test_taskcreate_appends_to_existing_todos(state_dir: Path) -> None:
     assert [t["id"] for t in saved["todos"]] == ["1", "2"]
     assert saved["todos"][1]["content"] == "B"
     assert saved["todos"][1]["status"] == "pending"
+
+
+def test_taskcreate_resets_when_previous_list_all_completed(state_dir: Path) -> None:
+    """The new "auto-clear" behavior: when every existing row is `completed`,
+    the next TaskCreate marks a *new* logical batch — drop the stale list
+    before appending. Without this, a user who finished one workflow and
+    started another would see N stale strikethrough rows above their new
+    in-progress work indefinitely."""
+    sd = _seed_session(state_dir)
+    (sd / "todos.json").write_text(
+        json.dumps(
+            {
+                "updated_at": 1,
+                "todos": [
+                    {"id": "1", "content": "Old A", "status": "completed", "activeForm": ""},
+                    {"id": "2", "content": "Old B", "status": "completed", "activeForm": ""},
+                ],
+            }
+        )
+    )
+    payload = {
+        "session_id": "abc-123",
+        "tool_name": "TaskCreate",
+        "tool_input": {"subject": "Fresh task"},
+        "tool_response": {"task": {"id": "99", "subject": "Fresh task"}},
+    }
+    run_hook("hud-post-tool.sh", payload, state_dir)
+    saved = json.loads((sd / "todos.json").read_text())
+    # Stale completed rows are gone; only the new task remains.
+    assert [t["id"] for t in saved["todos"]] == ["99"]
+    assert saved["todos"][0]["content"] == "Fresh task"
+
+
+def test_taskcreate_keeps_list_when_any_row_in_progress(state_dir: Path) -> None:
+    """Auto-clear must NOT fire mid-workflow. Any non-completed row means the
+    user is still working on the current batch — the new TaskCreate should
+    append to it, not reset."""
+    sd = _seed_session(state_dir)
+    (sd / "todos.json").write_text(
+        json.dumps(
+            {
+                "updated_at": 1,
+                "todos": [
+                    {"id": "1", "content": "Done", "status": "completed", "activeForm": ""},
+                    {"id": "2", "content": "Doing", "status": "in_progress", "activeForm": ""},
+                ],
+            }
+        )
+    )
+    payload = {
+        "session_id": "abc-123",
+        "tool_name": "TaskCreate",
+        "tool_input": {"subject": "Newly added"},
+        "tool_response": {"task": {"id": "3", "subject": "Newly added"}},
+    }
+    run_hook("hud-post-tool.sh", payload, state_dir)
+    saved = json.loads((sd / "todos.json").read_text())
+    # All three rows present, original order preserved, new one at the end.
+    assert [t["id"] for t in saved["todos"]] == ["1", "2", "3"]
+
+
+def test_taskcreate_keeps_list_when_any_row_pending(state_dir: Path) -> None:
+    """Pending rows count as "still working" too — only every-row-completed
+    triggers the auto-clear."""
+    sd = _seed_session(state_dir)
+    (sd / "todos.json").write_text(
+        json.dumps(
+            {
+                "updated_at": 1,
+                "todos": [
+                    {"id": "1", "content": "Done", "status": "completed", "activeForm": ""},
+                    {"id": "2", "content": "Later", "status": "pending", "activeForm": ""},
+                ],
+            }
+        )
+    )
+    payload = {
+        "session_id": "abc-123",
+        "tool_name": "TaskCreate",
+        "tool_input": {"subject": "Newly added"},
+        "tool_response": {"task": {"id": "3", "subject": "Newly added"}},
+    }
+    run_hook("hud-post-tool.sh", payload, state_dir)
+    saved = json.loads((sd / "todos.json").read_text())
+    assert [t["id"] for t in saved["todos"]] == ["1", "2", "3"]
+
+
+def test_taskcreate_into_empty_list_still_appends(state_dir: Path) -> None:
+    """Sanity: an empty todos.json (no rows) must NOT be mistaken for an
+    all-completed batch. `unique == ["completed"]` is false on empty arrays,
+    but worth pinning the behavior in a test so the jq filter can't be
+    refactored into a vacuous-all bug later."""
+    sd = _seed_session(state_dir)
+    (sd / "todos.json").write_text('{"updated_at":1,"todos":[]}')
+    payload = {
+        "session_id": "abc-123",
+        "tool_name": "TaskCreate",
+        "tool_input": {"subject": "First task"},
+        "tool_response": {"task": {"id": "1", "subject": "First task"}},
+    }
+    run_hook("hud-post-tool.sh", payload, state_dir)
+    saved = json.loads((sd / "todos.json").read_text())
+    assert [t["id"] for t in saved["todos"]] == ["1"]
 
 
 def test_taskcreate_without_id_is_skipped(state_dir: Path) -> None:
