@@ -26,9 +26,18 @@
 
   <template id="session-card">
     <article class="card" data-focused="0">
-      <header class="header">
-        <span class="model">—</span>
-        <span class="project">—</span>
+      <!--
+        Header label is the primary identifier (issue #5):
+          1. session name (from `claude -n` / `/rename`) if set,
+          2. else project basename,
+          3. else "(unnamed)".
+        The .model span is the secondary token after a · separator (added
+        in CSS via ::before). data-has-model toggles its visibility so a
+        missing model never renders a bare "?".
+      -->
+      <header class="header" data-has-model="0">
+        <span class="label">—</span>
+        <span class="model"></span>
       </header>
       <div class="current hidden">
         <span class="indicator">▶</span>

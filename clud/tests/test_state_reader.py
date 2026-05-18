@@ -72,7 +72,14 @@ def test_full_snapshot(reader: StateReader, tmp_path: Path) -> None:
     snap = reader.snapshot_for_tty("/dev/ttys003")
     assert snap is not None
     assert snap["tty"] == "/dev/ttys003"
-    assert snap["session"] == {"id": "abc", "model": "claude-opus-4-7", "project": "/p"}
+    # name is None because meta.json's transcript_path is "" (no rename event
+    # to scan for). The session-name plumbing has its own dedicated tests.
+    assert snap["session"] == {
+        "id": "abc",
+        "name": None,
+        "model": "claude-opus-4-7",
+        "project": "/p",
+    }
     assert snap["current"]["tool_name"] == "Bash"
     assert snap["current"]["input_summary"] == "git status"
     assert "running_for_ms" in snap["current"]
@@ -309,3 +316,196 @@ def test_snapshot_all_handles_corrupt_tty_map(reader: StateReader, tmp_path: Pat
     (tmp_path / "tty-map.json").write_text("{not json")
     snap = reader.snapshot_all("/dev/ttys000")
     assert snap == {"focused_tty": "/dev/ttys000", "sessions": []}
+
+
+# ---------------------------------------------------------------------------
+# session.name — derived from `custom-title` events in the transcript JSONL.
+# Claude Code persists `/rename` (and `claude -n`) as these events; there's no
+# hook that fires on rename, so the reader scans the transcript tail lazily.
+
+
+def _seed_session_with_transcript(tmp_path: Path, transcript_lines: list[str]) -> Path:
+    """Set up one tty/session pair whose meta.json points at a transcript file."""
+    transcript = tmp_path / "transcripts" / "abc.jsonl"
+    transcript.parent.mkdir(parents=True, exist_ok=True)
+    transcript.write_text("\n".join(transcript_lines) + ("\n" if transcript_lines else ""))
+    _write(
+        tmp_path / "tty-map.json",
+        {"/dev/ttys003": {"session_id": "abc", "claude_pid": 1, "started_at": 1000}},
+    )
+    _write(
+        tmp_path / "sessions/abc/meta.json",
+        {
+            "session_id": "abc",
+            "model": None,
+            "project": "/p",
+            "transcript_path": str(transcript),
+            "started_at": 1000,
+            "last_updated": 1000,
+            "ended_at": None,
+        },
+    )
+    return transcript
+
+
+def test_session_name_from_transcript_custom_title(reader: StateReader, tmp_path: Path) -> None:
+    """The latest `custom-title` line populates session.name."""
+    _seed_session_with_transcript(
+        tmp_path,
+        [
+            '{"type":"user","content":"hi"}',
+            '{"type":"custom-title","customTitle":"m5-slice_c","sessionId":"abc"}',
+        ],
+    )
+    snap = reader.snapshot_for_tty("/dev/ttys003")
+    assert snap is not None
+    assert snap["session"]["name"] == "m5-slice_c"
+
+
+def test_session_name_picks_latest_custom_title(reader: StateReader, tmp_path: Path) -> None:
+    """A session can be renamed multiple times; the most recent value wins."""
+    _seed_session_with_transcript(
+        tmp_path,
+        [
+            '{"type":"custom-title","customTitle":"first","sessionId":"abc"}',
+            '{"type":"assistant","content":"working..."}',
+            '{"type":"custom-title","customTitle":"second","sessionId":"abc"}',
+        ],
+    )
+    snap = reader.snapshot_for_tty("/dev/ttys003")
+    assert snap is not None
+    assert snap["session"]["name"] == "second"
+
+
+def test_session_name_none_when_no_custom_title(reader: StateReader, tmp_path: Path) -> None:
+    """Transcript with no rename event surfaces name=None — webview falls back
+    to the project basename."""
+    _seed_session_with_transcript(
+        tmp_path,
+        [
+            '{"type":"user","content":"hi"}',
+            '{"type":"assistant","content":"ok"}',
+        ],
+    )
+    snap = reader.snapshot_for_tty("/dev/ttys003")
+    assert snap is not None
+    assert snap["session"]["name"] is None
+
+
+def test_session_name_none_when_transcript_missing(reader: StateReader, tmp_path: Path) -> None:
+    """A meta.json that points at a transcript that doesn't exist yet (Claude
+    Code hasn't written one) is treated as no-data, not as an error."""
+    _write(
+        tmp_path / "tty-map.json",
+        {"/dev/ttys003": {"session_id": "abc", "claude_pid": 1, "started_at": 1000}},
+    )
+    _write(
+        tmp_path / "sessions/abc/meta.json",
+        {
+            "session_id": "abc",
+            "model": None,
+            "project": "/p",
+            "transcript_path": str(tmp_path / "does-not-exist.jsonl"),
+            "started_at": 1000,
+            "last_updated": 1000,
+            "ended_at": None,
+        },
+    )
+    snap = reader.snapshot_for_tty("/dev/ttys003")
+    assert snap is not None
+    assert snap["session"]["name"] is None
+
+
+def test_session_name_handles_corrupt_lines(reader: StateReader, tmp_path: Path) -> None:
+    """A malformed line near the tail must not blank out a perfectly good
+    custom-title earlier in the transcript."""
+    _seed_session_with_transcript(
+        tmp_path,
+        [
+            '{"type":"custom-title","customTitle":"good-name","sessionId":"abc"}',
+            "{this is not valid json",
+            "random text without a brace",
+        ],
+    )
+    snap = reader.snapshot_for_tty("/dev/ttys003")
+    assert snap is not None
+    assert snap["session"]["name"] == "good-name"
+
+
+def test_session_name_ignores_empty_custom_title(reader: StateReader, tmp_path: Path) -> None:
+    """A `customTitle: ""` event shouldn't masquerade as a real rename — the
+    earlier non-empty value remains the answer."""
+    _seed_session_with_transcript(
+        tmp_path,
+        [
+            '{"type":"custom-title","customTitle":"real","sessionId":"abc"}',
+            '{"type":"custom-title","customTitle":"","sessionId":"abc"}',
+        ],
+    )
+    snap = reader.snapshot_for_tty("/dev/ttys003")
+    assert snap is not None
+    assert snap["session"]["name"] == "real"
+
+
+def test_session_name_cached_when_transcript_unchanged(
+    reader: StateReader, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The 200ms poll loop calls into the reader 5x/sec per session. We must
+    not re-scan an unchanged transcript every poll — verify the transcript
+    file is only opened once when mtime+size don't change. We patch the
+    builtin `open` and filter on the transcript path so unrelated reads
+    (meta.json, etc.) don't pollute the count."""
+    transcript = _seed_session_with_transcript(
+        tmp_path,
+        ['{"type":"custom-title","customTitle":"cached","sessionId":"abc"}'],
+    )
+    transcript_path = str(transcript)
+
+    import builtins
+
+    real_open = builtins.open
+    transcript_opens = {"n": 0}
+
+    def counting_open(file, *args, **kwargs):  # type: ignore[no-untyped-def]
+        if str(file) == transcript_path:
+            transcript_opens["n"] += 1
+        return real_open(file, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", counting_open)
+
+    # Three back-to-back snapshots; the transcript is unchanged between them.
+    for _ in range(3):
+        snap = reader.snapshot_for_tty("/dev/ttys003")
+        assert snap is not None
+        assert snap["session"]["name"] == "cached"
+
+    # First snapshot opens once; second and third hit the cache.
+    assert transcript_opens["n"] == 1
+
+
+def test_session_name_cache_invalidated_on_mtime_change(
+    reader: StateReader, tmp_path: Path
+) -> None:
+    """When the user renames the session mid-poll-loop, the cached title must
+    be invalidated so the new name appears within one poll cycle."""
+    import os
+
+    transcript = _seed_session_with_transcript(
+        tmp_path,
+        ['{"type":"custom-title","customTitle":"first","sessionId":"abc"}'],
+    )
+    snap = reader.snapshot_for_tty("/dev/ttys003")
+    assert snap is not None
+    assert snap["session"]["name"] == "first"
+
+    # Simulate Claude appending a new rename event. Bump mtime explicitly so
+    # the test doesn't race the filesystem's mtime granularity (some FSes
+    # round to whole seconds).
+    with open(transcript, "a") as f:
+        f.write('{"type":"custom-title","customTitle":"renamed","sessionId":"abc"}\n')
+    st = transcript.stat()
+    os.utime(transcript, (st.st_atime, st.st_mtime + 1))
+
+    snap = reader.snapshot_for_tty("/dev/ttys003")
+    assert snap is not None
+    assert snap["session"]["name"] == "renamed"

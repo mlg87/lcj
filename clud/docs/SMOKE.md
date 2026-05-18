@@ -9,8 +9,10 @@ Run after any change to hooks or plugin. Takes ~2 minutes.
    - Verify "No Claude sessions running." empty state when nothing is running.
 
 3. **Run `claude`** in the tab.
-   - Verify a session card appears with the project basename within ~200ms.
-   - Model will show "?" — the SessionStart hook payload doesn't expose the model name as of writing. Not a bug.
+   - Verify a session card appears within ~200ms with the project basename as the header label.
+   - When the model name isn't known (SessionStart hook payload doesn't expose it as of writing), no bare `?` appears — the header is just the label.
+   - Run `/rename my-name` (or launch with `claude -n my-name`). Within one poll cycle (~200ms) the header label should switch to `my-name`. Rename again — the label updates again.
+   - With two `claude` sessions in the same project, give them different `/rename` names and confirm both cards show distinct labels.
 
 4. **Trigger any tool call** (e.g. ask Claude to `git status`).
    - Verify `▶ Bash · Xs` appears in the "current" line and clears when the tool returns.
