@@ -57,6 +57,10 @@ function render(snapshot) {
     let entry = cardsBySessionId.get(sid);
     if (!entry) {
       const card = els.template.content.firstElementChild.cloneNode(true);
+      // Stash the session id on the card so the clear-button click handler
+      // can look up the right session without re-walking the snapshot.
+      card.dataset.sessionId = sid;
+      wireClearButton(card, sid);
       entry = { card };
       cardsBySessionId.set(sid, entry);
     }
@@ -163,6 +167,46 @@ function renderCard(card, snap, focused) {
   card.querySelector(".todos-count").textContent = `${done}/${visible.length}`;
   card.querySelector(".progress .bar").style.width =
     visible.length ? `${(done / visible.length) * 100}%` : "0";
+
+  // Clear button is meaningful only when there's something to clear.
+  // Hiding it on empty lists avoids a "click to clear an empty list"
+  // affordance that doesn't do anything visible.
+  const clearBtn = card.querySelector(".todos-clear");
+  clearBtn.classList.toggle("hidden", visible.length === 0);
+}
+
+// Wire the per-card "✕" clear button. Fired DELETE goes to the local
+// HudServer which atomic-writes an empty todos list for this session.
+// We optimistically clear the local DOM so the user gets instant feedback
+// (the next snapshot push, ~200ms away, will confirm the server state).
+function wireClearButton(card, sid) {
+  const btn = card.querySelector(".todos-clear");
+  btn.addEventListener("click", async () => {
+    // Encode for safety even though our SID regex on the server is strict.
+    const url = `/sessions/${encodeURIComponent(sid)}/todos`;
+    // Block double-clicks while in flight — the snapshot push that confirms
+    // the clear is ~200ms behind and we don't want N redundant requests.
+    btn.disabled = true;
+    try {
+      const resp = await fetch(url, {method: "DELETE"});
+      if (!resp.ok) {
+        // Surface the failure cleanly. The button is reasonably out of the
+        // way so a brief title-attribute change is enough; the next snapshot
+        // will overwrite the optimistic clear if the server refused.
+        console.error("clear todos failed", resp.status, await resp.text().catch(() => ""));
+        return;
+      }
+      // Optimistic: empty the list and reset progress instantly.
+      card.querySelector(".todos").replaceChildren();
+      card.querySelector(".todos-count").textContent = "0/0";
+      card.querySelector(".progress .bar").style.width = "0";
+      btn.classList.add("hidden");
+    } catch (e) {
+      console.error("clear todos request error", e);
+    } finally {
+      btn.disabled = false;
+    }
+  });
 }
 
 function renderSubagentRow(sa) {

@@ -59,6 +59,15 @@
         <div class="section-header">
           <span class="label">Todos</span>
           <span class="todos-count count">0/0</span>
+          <!--
+            Manual reset: empties this card's todos.json via the server's
+            DELETE /sessions/<sid>/todos endpoint. Useful when the user
+            wants to dismiss an old list without waiting for the next
+            TaskCreate to auto-clear it. Hidden via .hidden when the list
+            is empty so we don't render a clear-an-empty-list affordance.
+          -->
+          <button class="todos-clear hidden" type="button"
+                  title="Clear todos" aria-label="Clear todos">✕</button>
         </div>
         <div class="progress"><div class="bar"></div></div>
         <ul class="todos"></ul>

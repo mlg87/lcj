@@ -113,12 +113,33 @@ html, body {
 .section-header {
   display: flex;
   justify-content: space-between;
+  align-items: center;
   font-size: 10px;
   letter-spacing: 0.5px;
   color: var(--accent);
   margin-bottom: 4px;
 }
 .section-header .count { color: var(--muted); }
+
+/* Clear button: small, muted, hover to reveal. Sits to the right of the
+   "5/5" count in the Todos section-header (todos-wrap only — the
+   subagents section doesn't ship one because the markers are deleted by
+   their owning hooks, not by the user). */
+.todos-clear {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1;
+  margin-left: 6px;
+  padding: 2px 6px;
+}
+.todos-clear:hover  { color: var(--text); border-color: var(--border-focused); }
+.todos-clear:active { color: var(--accent); }
+.todos-clear.hidden { display: none; }
 
 .subagents-wrap { margin-bottom: 10px; }
 .subagents-wrap.hidden { display: none; }

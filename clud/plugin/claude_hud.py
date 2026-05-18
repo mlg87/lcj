@@ -69,9 +69,12 @@ log = logging.getLogger("claude_hud")
 async def main(connection: iterm2.Connection) -> None:  # type: ignore[name-defined]
     STATE_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Webview lives next to this file inside the plugin package.
+    # Webview lives next to this file inside the plugin package. We also
+    # hand the server STATE_DIR so its write-side endpoints (currently the
+    # clear-todos route powering the HUD's ✕ button) land in the same dir
+    # the hooks and StateReader use.
     webview_dir = Path(__file__).parent / "webview"
-    server = HudServer(webview_dir=webview_dir)
+    server = HudServer(webview_dir=webview_dir, state_dir=STATE_DIR)
     port = await server.start()
     log.info("HUD server bound at http://127.0.0.1:%d", port)
 
