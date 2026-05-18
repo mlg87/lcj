@@ -65,14 +65,24 @@ html, body {
 
 .header {
   display: flex;
-  justify-content: space-between;
+  /* Label and model sit adjacent on the left; the · separator is
+     injected via .model::before so it doesn't appear when model is empty
+     (issue #5). */
+  justify-content: flex-start;
   font-size: 10px;
   color: var(--muted);
   margin-bottom: 8px;
   padding-bottom: 6px;
   border-bottom: 1px solid var(--border);
 }
-.header .model { color: var(--accent); font-weight: bold; }
+/* Primary identifier — session name, project basename, or "(unnamed)". */
+.header .label { color: var(--accent); font-weight: bold; }
+/* Model is a secondary token; muted, with a · separator before it. */
+.header .model         { color: var(--muted); }
+.header .model::before { content: " · "; }
+/* When the SessionStart hook hasn't given us a model, hide the model
+   span entirely — a bare "?" was confusing in earlier versions. */
+.header[data-has-model="0"] .model { display: none; }
 
 .current {
   background: #161616;

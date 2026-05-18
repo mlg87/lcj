@@ -31,10 +31,26 @@ import time
 from pathlib import Path
 from typing import Any
 
+# How many trailing bytes of a session transcript we scan for the latest
+# `custom-title` event (issue #5). 256 KiB is enough to comfortably hold the
+# tail of a long-running session — a single custom-title line is ~120 bytes,
+# and Claude appends it on every /rename. Above this we'd start paying
+# linear cost on multi-megabyte transcripts. Tuned with the 200ms poll
+# cadence and the single-slot mtime cache below in mind.
+_TRANSCRIPT_TAIL_BYTES = 256 * 1024
+
 
 class StateReader:
     def __init__(self, state_dir: Path) -> None:
         self._dir = state_dir
+        # Cache of custom-title lookups keyed by transcript path. Value is
+        # (mtime, size, custom_title). The 200ms poll loop hits this method
+        # 5x/sec per session — without caching we'd re-read 256KB per call
+        # even when the transcript hasn't changed. We invalidate on either
+        # mtime or size change so an in-place append (mtime updates but size
+        # might collide briefly under fast typing) and a same-size overwrite
+        # are both detected.
+        self._title_cache: dict[str, tuple[float, int, str | None]] = {}
 
     def snapshot_for_tty(self, tty: str | None) -> dict[str, Any] | None:
         """Return the full snapshot for the session attached to `tty`, or None.
@@ -71,10 +87,20 @@ class StateReader:
 
         subagents = self._collect_subagents(session_dir / "subagents")
 
+        # Session name (issue #5). Claude Code persists `/rename` and
+        # `claude -n <name>` as `{"type":"custom-title", ...}` lines appended
+        # to the live transcript JSONL. We scan its tail lazily — there is no
+        # hook that fires on /rename, so the reader is the right place to
+        # pick it up. None when the user hasn't renamed the session; the
+        # webview falls back to the project basename in that case.
+        transcript_path = meta.get("transcript_path")
+        name = self._read_custom_title(transcript_path) if transcript_path else None
+
         return {
             "tty": tty,
             "session": {
                 "id": session_id,
+                "name": name,
                 "model": meta.get("model"),
                 "project": meta.get("project", ""),
             },
@@ -164,3 +190,65 @@ class StateReader:
         # when iterdir() returns inodes in a different order on rescan.
         agents.sort(key=lambda a: a["running_for_ms"], reverse=True)
         return agents
+
+    def _read_custom_title(self, transcript_path: str) -> str | None:
+        """Return the latest custom session name from the transcript, or None.
+
+        Claude Code persists `/rename` (and `claude -n`) as JSONL events of the
+        shape `{"type":"custom-title","customTitle":"…","sessionId":"…"}`
+        appended to the live transcript at the path in meta.json. The latest
+        such line wins — a session can be renamed multiple times.
+
+        We scan only the trailing `_TRANSCRIPT_TAIL_BYTES` and short-circuit
+        on the first `custom-title` line found walking backwards. Cached by
+        (mtime, size) so an unchanged transcript skips the read entirely; the
+        HUD polls every 200ms and transcripts can grow to multiple megabytes.
+
+        Returns None for any read failure, malformed JSON, missing field, etc.
+        — the snapshot must never raise from a disk surprise.
+        """
+        try:
+            st = Path(transcript_path).stat()
+        except OSError:
+            return None
+
+        cached = self._title_cache.get(transcript_path)
+        if cached is not None and cached[0] == st.st_mtime and cached[1] == st.st_size:
+            return cached[2]
+
+        title: str | None = None
+        try:
+            with open(transcript_path, "rb") as f:
+                if st.st_size > _TRANSCRIPT_TAIL_BYTES:
+                    f.seek(-_TRANSCRIPT_TAIL_BYTES, 2)
+                    # If we seeked into the middle of a line, drop the partial
+                    # leading fragment so json.loads doesn't see a half-record.
+                    # On a freshly-truncated boundary readline() returns up to
+                    # and including the next newline.
+                    f.readline()
+                tail = f.read()
+        except OSError:
+            self._title_cache[transcript_path] = (st.st_mtime, st.st_size, None)
+            return None
+
+        # Walk lines from the end so we stop at the most recent custom-title.
+        # The substring check is a cheap pre-filter that lets us skip JSON
+        # parsing for ~all transcript lines (which are tool calls / messages).
+        for line in reversed(tail.splitlines()):
+            if b'"type":"custom-title"' not in line:
+                continue
+            try:
+                doc = json.loads(line)
+            except (json.JSONDecodeError, ValueError):
+                continue
+            if not isinstance(doc, dict):
+                continue
+            if doc.get("type") != "custom-title":
+                continue
+            candidate = doc.get("customTitle")
+            if isinstance(candidate, str) and candidate:
+                title = candidate
+                break
+
+        self._title_cache[transcript_path] = (st.st_mtime, st.st_size, title)
+        return title

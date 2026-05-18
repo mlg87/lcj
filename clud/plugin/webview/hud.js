@@ -83,8 +83,28 @@ function render(snapshot) {
 function renderCard(card, snap, focused) {
   card.dataset.focused = focused ? "1" : "0";
 
-  card.querySelector(".model").textContent = (snap.session && snap.session.model) || "?";
-  card.querySelector(".project").textContent = basename(snap.session && snap.session.project);
+  // Header label is the primary identifier (issue #5): session name first
+  // (set via `claude -n` or `/rename`), then project basename, then a
+  // last-resort "(unnamed)". The old `<model> · <project>` header rendered
+  // "? · lcj" for nearly every card because the SessionStart hook payload
+  // doesn't expose the model — and that was nearly useless for users with
+  // multiple sessions in the same project.
+  const session = snap.session || {};
+  const label = session.name || basename(session.project) || "(unnamed)";
+  card.querySelector("header .label").textContent = label;
+
+  // Model is the secondary token. CSS adds the " · " separator via
+  // .model::before; we toggle data-has-model so both separator and span
+  // hide when the model is unknown — no bare "?" ever.
+  const header = card.querySelector("header");
+  const model = session.model;
+  if (model) {
+    header.dataset.hasModel = "1";
+    card.querySelector("header .model").textContent = model;
+  } else {
+    header.dataset.hasModel = "0";
+    card.querySelector("header .model").textContent = "";
+  }
 
   const currentEl = card.querySelector(".current");
   if (snap.current) {
