@@ -65,9 +65,9 @@ html, body {
 
 .header {
   display: flex;
-  /* Label and model sit adjacent on the left; the · separator is
-     injected via .model::before so it doesn't appear when model is empty
-     (issue #5). */
+  /* All three tokens sit adjacent on the left; · separators come from
+     ::before on .name and .model so they never appear when their field
+     is empty. */
   justify-content: flex-start;
   font-size: 10px;
   color: var(--muted);
@@ -75,13 +75,21 @@ html, body {
   padding-bottom: 6px;
   border-bottom: 1px solid var(--border);
 }
-/* Primary identifier — session name, project basename, or "(unnamed)". */
+/* .label = project basename, always-present context anchor. Bold accent
+   so it reads as "what repo am I in?" at a glance — and works as the
+   only visible token on a session that hasn't been /rename'd. */
 .header .label { color: var(--accent); font-weight: bold; }
-/* Model is a secondary token; muted, with a · separator before it. */
+/* .name = the /rename value, the user-chosen identifier for *this* session.
+   Lighter weight than .label so the eye lands on the project first, but
+   still legible against the muted header background. */
+.header .name          { color: var(--text); font-weight: normal; }
+.header .name::before  { content: " · "; color: var(--muted); }
+/* .model = secondary tag, fully muted. */
 .header .model         { color: var(--muted); }
 .header .model::before { content: " · "; }
-/* When the SessionStart hook hasn't given us a model, hide the model
-   span entirely — a bare "?" was confusing in earlier versions. */
+/* Hide token + separator when its field is empty so we never render a
+   stray "·" or a bare "?" for an unknown field. */
+.header[data-has-name="0"]  .name  { display: none; }
 .header[data-has-model="0"] .model { display: none; }
 
 .current {
