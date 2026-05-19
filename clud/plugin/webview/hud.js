@@ -87,7 +87,7 @@ function render(snapshot) {
 function renderCard(card, snap, focused) {
   card.dataset.focused = focused ? "1" : "0";
 
-  // Header is three tokens: project · session-name · model.
+  // Header is four tokens: project · session-name · model · remote-control.
   //   .label  always shows the project basename so the user knows which
   //           repo a card belongs to at a glance — disambiguates two
   //           cards from the same project, and stays useful before the
@@ -97,6 +97,9 @@ function renderCard(card, snap, focused) {
   //           hides both the dot and the span when no name exists.
   //   .model  same pattern for the model. Hidden when SessionStart didn't
   //           supply one — never render a bare "?".
+  //   .remote remote-control indicator (issue #6). Toggled by
+  //           data-has-remote; glyph is CSS-driven, tooltip composed
+  //           from session.remote_control below.
   // If the project is somehow unknown (shouldn't happen in practice — the
   // SessionStart hook captures cwd), we promote the name (or "(unnamed)")
   // into .label so the header still has *something* to identify the card.
@@ -111,16 +114,32 @@ function renderCard(card, snap, focused) {
   // equal the project basename, since that's just visual noise.
   const showName = !!project && !!name && name !== project;
 
-  const labelEl = card.querySelector("header .label");
-  const nameEl  = card.querySelector("header .name");
-  const modelEl = card.querySelector("header .model");
-  const header  = card.querySelector("header");
+  const labelEl  = card.querySelector("header .label");
+  const nameEl   = card.querySelector("header .name");
+  const modelEl  = card.querySelector("header .model");
+  const remoteEl = card.querySelector("header .remote");
+  const header   = card.querySelector("header");
 
   labelEl.textContent = labelText;
   nameEl.textContent  = showName ? name : "";
   modelEl.textContent = model || "";
   header.dataset.hasName  = showName ? "1" : "0";
   header.dataset.hasModel = model    ? "1" : "0";
+
+  // Remote-control indicator (issue #6). The glyph itself comes from
+  // .remote::before in hud.css — only the tooltip is snapshot-driven.
+  // Tooltip parts are joined with literal " · " when both fields are
+  // present so the result reads "Remote-control enabled (schedule) · last 5m ago".
+  const remote = session.remote_control;
+  header.dataset.hasRemote = remote ? "1" : "0";
+  if (remote) {
+    let tip = "Remote-control enabled";
+    if (remote.channel)        tip += ` (${remote.channel})`;
+    if (remote.last_remote_at) tip += ` · last ${formatAgo(remote.last_remote_at)}`;
+    remoteEl.title = tip;
+  } else {
+    remoteEl.title = "";
+  }
 
   const currentEl = card.querySelector(".current");
   if (snap.current) {
@@ -245,6 +264,19 @@ function formatElapsed(ms) {
   const s = Math.floor(ms / 1000);
   if (s < 60) return `${s}s`;
   return `${Math.floor(s / 60)}m${(s % 60).toString().padStart(2, "0")}s`;
+}
+
+// "30s ago" / "5m ago" / "2h ago" / "3d ago" — coarse human readable
+// time-since formatter for the remote-control indicator tooltip (issue #6).
+// Coarse on purpose: precision down to the second would jitter the tooltip
+// in a way that's never useful, and would also fight with the 200ms snapshot
+// cadence.
+function formatAgo(epochSeconds) {
+  const ageS = Math.max(0, Math.floor(Date.now() / 1000 - epochSeconds));
+  if (ageS < 60)      return `${ageS}s ago`;
+  if (ageS < 3600)    return `${Math.floor(ageS / 60)}m ago`;
+  if (ageS < 86400)   return `${Math.floor(ageS / 3600)}h ago`;
+  return `${Math.floor(ageS / 86400)}d ago`;
 }
 
 // Tick the "last updated" + all live elapsed counters every 500ms so the
