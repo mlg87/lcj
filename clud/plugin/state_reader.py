@@ -87,6 +87,16 @@ class StateReader:
 
         subagents = self._collect_subagents(session_dir / "subagents")
 
+        # Remote-control indicator (issue #6). Presence of remote.json signals
+        # that this session is reachable from outside the local terminal
+        # (scheduled trigger, MCP, etc.). Content is just a tooltip-friendly
+        # descriptor — never a secret. See clud/docs/REMOTE_CONTROL.md for the
+        # writer contract.
+        remote_doc = self._load_json(session_dir / "remote.json")
+        remote_control = (
+            self._normalize_remote(remote_doc) if isinstance(remote_doc, dict) else None
+        )
+
         # Session name (issue #5). Claude Code persists `/rename` and
         # `claude -n <name>` as `{"type":"custom-title", ...}` lines appended
         # to the live transcript JSONL. We scan its tail lazily — there is no
@@ -103,6 +113,7 @@ class StateReader:
                 "name": name,
                 "model": meta.get("model"),
                 "project": meta.get("project", ""),
+                "remote_control": remote_control,
             },
             "current": current,
             "todos": todos,
@@ -190,6 +201,40 @@ class StateReader:
         # when iterdir() returns inodes in a different order on rescan.
         agents.sort(key=lambda a: a["running_for_ms"], reverse=True)
         return agents
+
+    @staticmethod
+    def _normalize_remote(doc: dict[str, Any]) -> dict[str, Any]:
+        """Normalize a remote.json payload into the snapshot shape.
+
+        Presence-of-file is the source of truth (issue #6) — so this returns a
+        dict (never None) whenever the file parsed as a dict. Bad fields are
+        dropped to None individually so a malformed-but-present file still
+        lights the indicator, just with a bare tooltip.
+
+        Channel must be a real str (rejects lists/dicts/ints), trimmed,
+        non-empty, and ≤32 chars (defense in depth against bad writers
+        leaking long blobs into the DOM).
+
+        last_remote_at must coerce to a non-negative int. Booleans are
+        rejected explicitly because `isinstance(True, int) is True` in Python.
+        """
+        channel: str | None = None
+        raw_channel = doc.get("channel")
+        if isinstance(raw_channel, str):
+            trimmed = raw_channel.strip()
+            if trimmed and len(trimmed) <= 32:
+                channel = trimmed
+
+        last_remote_at: int | None = None
+        raw_ts = doc.get("last_remote_at")
+        if isinstance(raw_ts, bool):
+            pass  # bool is a subclass of int; reject explicitly
+        elif isinstance(raw_ts, (int, float)):
+            ts = int(raw_ts)
+            if ts >= 0:
+                last_remote_at = ts
+
+        return {"channel": channel, "last_remote_at": last_remote_at}
 
     def _read_custom_title(self, transcript_path: str) -> str | None:
         """Return the latest custom session name from the transcript, or None.
