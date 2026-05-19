@@ -74,11 +74,13 @@ def test_full_snapshot(reader: StateReader, tmp_path: Path) -> None:
     assert snap["tty"] == "/dev/ttys003"
     # name is None because meta.json's transcript_path is "" (no rename event
     # to scan for). The session-name plumbing has its own dedicated tests.
+    # remote_control is None because no remote.json was seeded.
     assert snap["session"] == {
         "id": "abc",
         "name": None,
         "model": "claude-opus-4-7",
         "project": "/p",
+        "remote_control": None,
     }
     assert snap["current"]["tool_name"] == "Bash"
     assert snap["current"]["input_summary"] == "git status"
@@ -509,3 +511,101 @@ def test_session_name_cache_invalidated_on_mtime_change(
     snap = reader.snapshot_for_tty("/dev/ttys003")
     assert snap is not None
     assert snap["session"]["name"] == "renamed"
+
+
+# ---------------------------------------------------------------------------
+# session.remote_control — derived from remote.json in the session directory.
+# Presence-of-file is the contract (issue #6): existing file → indicator on.
+
+
+def test_remote_control_present(reader: StateReader, tmp_path: Path) -> None:
+    """remote.json existing → session.remote_control is populated."""
+    _seed_session_with_meta(tmp_path)
+    _write(
+        tmp_path / "sessions/abc/remote.json",
+        {"channel": "schedule", "last_remote_at": 1779200000},
+    )
+    snap = reader.snapshot_for_tty("/dev/ttys003")
+    assert snap is not None
+    assert snap["session"]["remote_control"] == {
+        "channel": "schedule",
+        "last_remote_at": 1779200000,
+    }
+
+
+def test_remote_control_absent(reader: StateReader, tmp_path: Path) -> None:
+    """remote.json missing → session.remote_control is None."""
+    _seed_session_with_meta(tmp_path)
+    snap = reader.snapshot_for_tty("/dev/ttys003")
+    assert snap is not None
+    assert snap["session"]["remote_control"] is None
+
+
+def test_remote_control_empty_dict_is_truthy(reader: StateReader, tmp_path: Path) -> None:
+    """Empty {} → indicator on, both fields None. Presence-of-file is the contract."""
+    _seed_session_with_meta(tmp_path)
+    _write(tmp_path / "sessions/abc/remote.json", {})
+    snap = reader.snapshot_for_tty("/dev/ttys003")
+    assert snap is not None
+    assert snap["session"]["remote_control"] == {"channel": None, "last_remote_at": None}
+
+
+def test_remote_control_corrupt_json_returns_none(reader: StateReader, tmp_path: Path) -> None:
+    """Corrupt remote.json → load_json returns None → indicator off (presence
+    of *a file* is the contract, but a file we can't parse can't light it)."""
+    _seed_session_with_meta(tmp_path)
+    (tmp_path / "sessions/abc/remote.json").write_text("{not json")
+    snap = reader.snapshot_for_tty("/dev/ttys003")
+    assert snap is not None
+    assert snap["session"]["remote_control"] is None
+
+
+def test_remote_control_channel_too_long_is_dropped(reader: StateReader, tmp_path: Path) -> None:
+    """Oversized channel string is dropped; presence still lights indicator."""
+    _seed_session_with_meta(tmp_path)
+    _write(tmp_path / "sessions/abc/remote.json", {"channel": "x" * 100})
+    snap = reader.snapshot_for_tty("/dev/ttys003")
+    assert snap is not None
+    assert snap["session"]["remote_control"] == {"channel": None, "last_remote_at": None}
+
+
+def test_remote_control_bad_field_types_dropped(reader: StateReader, tmp_path: Path) -> None:
+    """Non-string channel and non-numeric last_remote_at are dropped individually."""
+    _seed_session_with_meta(tmp_path)
+    _write(
+        tmp_path / "sessions/abc/remote.json",
+        {"channel": ["a", "b"], "last_remote_at": "foo"},
+    )
+    snap = reader.snapshot_for_tty("/dev/ttys003")
+    assert snap is not None
+    assert snap["session"]["remote_control"] == {"channel": None, "last_remote_at": None}
+
+
+def test_remote_control_unknown_keys_filtered(reader: StateReader, tmp_path: Path) -> None:
+    """Unknown keys are silently ignored — additive evolution is safe."""
+    _seed_session_with_meta(tmp_path)
+    _write(
+        tmp_path / "sessions/abc/remote.json",
+        {"channel": "schedule", "future_field": {"deep": "data"}, "another": 42},
+    )
+    snap = reader.snapshot_for_tty("/dev/ttys003")
+    assert snap is not None
+    assert snap["session"]["remote_control"] == {"channel": "schedule", "last_remote_at": None}
+
+
+def test_remote_control_negative_timestamp_dropped(reader: StateReader, tmp_path: Path) -> None:
+    """Negative last_remote_at is dropped; it can't be a real epoch second."""
+    _seed_session_with_meta(tmp_path)
+    _write(tmp_path / "sessions/abc/remote.json", {"last_remote_at": -1})
+    snap = reader.snapshot_for_tty("/dev/ttys003")
+    assert snap is not None
+    assert snap["session"]["remote_control"] == {"channel": None, "last_remote_at": None}
+
+
+def test_remote_control_boolean_timestamp_rejected(reader: StateReader, tmp_path: Path) -> None:
+    """isinstance(True, int) is True in Python — reject explicitly."""
+    _seed_session_with_meta(tmp_path)
+    _write(tmp_path / "sessions/abc/remote.json", {"last_remote_at": True})
+    snap = reader.snapshot_for_tty("/dev/ttys003")
+    assert snap is not None
+    assert snap["session"]["remote_control"] == {"channel": None, "last_remote_at": None}

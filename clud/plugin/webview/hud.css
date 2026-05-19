@@ -65,9 +65,10 @@ html, body {
 
 .header {
   display: flex;
-  /* All three tokens sit adjacent on the left; · separators come from
+  /* All four tokens sit adjacent on the left; · separators come from
      ::before on .name and .model so they never appear when their field
-     is empty. */
+     is empty. The trailing .remote indicator (issue #6) uses margin
+     instead of a ::before separator — it's a marker, not a label. */
   justify-content: flex-start;
   font-size: 10px;
   color: var(--muted);
@@ -87,10 +88,19 @@ html, body {
 /* .model = secondary tag, fully muted. */
 .header .model         { color: var(--muted); }
 .header .model::before { content: " · "; }
+/* .remote = remote-control indicator (issue #6). Glyph comes from
+   ::before so a malicious snapshot can never influence which character
+   renders — the JS only writes the title attribute, never the content.
+   Trailing position keeps the project label anchored when the indicator
+   toggles. No leading "·" because it's a marker, not a label, and
+   rendering "· ◉" would look like punctuation noise. */
+.header .remote         { color: var(--accent); margin-left: 6px; cursor: help; }
+.header .remote::before { content: "\25C9"; }  /* ◉ U+25C9 — monospace-friendly antenna/radio dot */
 /* Hide token + separator when its field is empty so we never render a
    stray "·" or a bare "?" for an unknown field. */
-.header[data-has-name="0"]  .name  { display: none; }
-.header[data-has-model="0"] .model { display: none; }
+.header[data-has-name="0"]   .name   { display: none; }
+.header[data-has-model="0"]  .model  { display: none; }
+.header[data-has-remote="0"] .remote { display: none; }
 
 .current {
   background: #161616;

@@ -27,20 +27,31 @@
   <template id="session-card">
     <article class="card" data-focused="0">
       <!--
-        Header is three tokens, separated by · (added in CSS via ::before):
-          .label = project basename — always the primary context anchor.
-          .name  = session name from `claude -n` / `/rename`, when set.
-          .model = model name, when the SessionStart hook supplies it.
-        The data-has-name / data-has-model attributes hide the .name and
-        .model spans (and their separators) when their fields are empty —
-        a missing model must never render as a bare "?". When project is
-        unknown (rare) the JS promotes name or "(unnamed)" into .label so
-        the header still tells the user something.
+        Header is three tokens separated by · (added in CSS via ::before),
+        plus a trailing indicator glyph:
+          .label  = project basename — always the primary context anchor.
+          .name   = session name from `claude -n` / `/rename`, when set.
+          .model  = model name, when the SessionStart hook supplies it.
+          .remote = remote-control indicator (issue #6), shown only when
+                    session.remote_control is set on the snapshot. The
+                    glyph is CSS-driven, the tooltip is snapshot-driven.
+        The data-has-name / data-has-model / data-has-remote attributes
+        hide their spans (and any leading separators) when their fields
+        are empty — a missing model must never render as a bare "?".
+        When project is unknown (rare) the JS promotes name or "(unnamed)"
+        into .label so the header still tells the user something.
       -->
-      <header class="header" data-has-name="0" data-has-model="0">
+      <header class="header" data-has-name="0" data-has-model="0" data-has-remote="0">
         <span class="label">—</span>
         <span class="name"></span>
         <span class="model"></span>
+        <!--
+          Remote-control indicator (issue #6). The glyph itself comes from
+          .remote::before in hud.css — snapshot content cannot influence
+          which character renders, even though we already use textContent
+          everywhere. Only the title attribute is snapshot-driven.
+        -->
+        <span class="remote" title=""></span>
       </header>
       <div class="current hidden">
         <span class="indicator">▶</span>
