@@ -65,9 +65,10 @@ html, body {
 
 .header {
   display: flex;
-  /* All three tokens sit adjacent on the left; · separators come from
+  /* All four tokens sit adjacent on the left; · separators come from
      ::before on .name and .model so they never appear when their field
-     is empty. */
+     is empty. The trailing .remote indicator (issue #6) uses margin
+     instead of a ::before separator — it's a marker, not a label. */
   justify-content: flex-start;
   font-size: 10px;
   color: var(--muted);
