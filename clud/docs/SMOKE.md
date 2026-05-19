@@ -32,6 +32,30 @@ Run after any change to hooks or plugin. Takes ~2 minutes.
    - Verify the focused tab's card has the brighter accent (left border + panel background).
    - Verify switching focus between tabs flips the accent within ~200ms — both cards stay visible the whole time.
 
+8. **Remote-control indicator** (issue #6). With at least one Claude session running:
+   - Discover the session id from the HUD state dir:
+     `SID=$(ls -1 ~/.claude/state/hud/sessions | head -1)`
+   - Light the indicator:
+     `printf '{"channel":"manual","last_remote_at":%s}' "$(date +%s)" \
+        > ~/.claude/state/hud/sessions/$SID/remote.json`
+     Expected: the `◉` glyph appears in that card's header within ~200 ms,
+     in the same accent color as the focused-card outline. Hovering it
+     reveals `Remote-control enabled (manual) · last 0s ago`.
+   - Toggle off:
+     `rm ~/.claude/state/hud/sessions/$SID/remote.json`
+     Expected: the glyph disappears within ~200 ms.
+   - Corrupt write (no crash, no indicator):
+     `printf 'not valid json' > ~/.claude/state/hud/sessions/$SID/remote.json`
+     Expected: no indicator, no console error in the iTerm Python script
+     console, the HUD keeps running. Clean up with `rm` after.
+   - Oversized channel (presence still lights, tooltip bare):
+     `printf '{"channel":"%s"}' "$(printf 'x%.0s' {1..100})" \
+        > ~/.claude/state/hud/sessions/$SID/remote.json`
+     Expected: indicator on; tooltip reads `Remote-control enabled`
+     (no channel suffix). Clean up with `rm`.
+   - Verify cards without `remote.json` are pixel-identical to before
+     this PR — no stray whitespace at the end of the header, no glyph.
+
 If anything misbehaves, check:
 - `~/.claude/state/hud/errors.log` (hook errors)
 - iTerm's Python script console (plugin errors)
