@@ -2,6 +2,9 @@
 
 iTerm2 toolbelt panel that mirrors live Claude Code session state — todos, current tool, model, project — for whichever Claude tab is focused.
 
+<img width="499" height="389" alt="image" src="https://github.com/user-attachments/assets/bf14d7d4-3995-4242-a778-cccacfe93ab4" />
+
+
 ## Architecture
 
 Three independent layers communicate only through JSON files under `~/.claude/state/hud/`. The hooks (write side) and plugin (read side) never talk to each other directly; the filesystem is the only contract.
