@@ -49,3 +49,8 @@ ignore_missing_imports = true
 # asyncio_mode=auto lets us write `async def test_*` without per-test markers.
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# Put plugin/ on sys.path so modules that import siblings by bare name
+# (the import style the iTerm runtime requires — see claude_hud.py) are
+# importable under pytest. Existing `from plugin.X import …` imports keep
+# working; this only adds the bare-name resolution path.
+pythonpath = ["plugin"]
