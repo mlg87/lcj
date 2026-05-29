@@ -18,6 +18,15 @@
   --accent-dim: #557;
   --running: #fa0;
   --done: #7c7;
+  --bar-track: #222;
+  --bar-ok:   #3ac46a;   /* <70%  green  */
+  --bar-warn: #e0a01e;   /* 70-89% amber */
+  --bar-crit: #e23b30;   /* >=90%  red   */
+  --status-none: #3ac46a;
+  --status-minor: #e0a01e;
+  --status-major: #e07a1e;
+  --status-critical: #e23b30;
+  --status-unknown: #666;
 }
 
 * { box-sizing: border-box; }
@@ -35,6 +44,14 @@ html, body {
 /* CSS-driven state toggle — no JS needed to swap which section shows. */
 .hud[data-state="empty"] .sessions { display: none; }
 .hud[data-state="ready"] .empty    { display: none; }
+
+/* The strip is account-global — always shown, independent of whether any
+   session is live. It sits above both the empty message and the cards. */
+.strip {
+  padding: 2px 0 8px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
 
 .empty {
   color: var(--muted);
@@ -212,3 +229,103 @@ html, body {
   color: var(--muted);
   text-align: right;
 }
+
+/* Usage bars: one line each, label + % sit ON TOP of the fill. The fill is
+   traffic-light colored by data-level; text gets a dark shadow so it reads
+   over both the colored fill and the dark track. */
+.usage { display: flex; flex-direction: column; gap: 4px; }
+.bar {
+  position: relative;
+  height: 18px;
+  border-radius: 3px;
+  background: var(--bar-track);
+  overflow: hidden;
+}
+.bar .fill {
+  position: absolute;
+  inset: 0 auto 0 0;     /* top/bottom/left pinned; width set inline by JS */
+  width: 0;
+  background: var(--bar-ok);
+  transition: width 200ms ease-out;
+}
+.bar .fill[data-level="warn"] { background: var(--bar-warn); }
+.bar .fill[data-level="crit"] { background: var(--bar-crit); }
+.bar .blabel, .bar .bpct {
+  position: absolute;
+  top: 0;
+  line-height: 18px;
+  font-size: 11px;
+  color: #eee;
+  text-shadow: 0 0 2px #000, 0 0 2px #000;  /* legible over fill AND track */
+  z-index: 1;
+}
+.bar .blabel { left: 6px; font-weight: bold; }
+.bar .bpct   { right: 6px; font-variant-numeric: tabular-nums; }
+
+/* When usage is unavailable, the two bars hide and this single muted line
+   shows instead (JS toggles .hidden + data-usage on .strip). */
+.strip[data-usage="unavailable"] .bar { display: none; }
+.usage-unavailable { color: var(--muted); font-size: 11px; padding: 2px 0; }
+.usage-unavailable.hidden { display: none; }
+
+/* Status line: dot + description, with the refresh chip pushed right. */
+.statusline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 11px;
+  position: relative;
+}
+.statusline .dot::before { content: "\25CF"; }  /* ● */
+.statusline .dot { color: var(--status-unknown); }
+.statusline[data-indicator="none"]     .dot { color: var(--status-none); }
+.statusline[data-indicator="minor"]    .dot { color: var(--status-minor); }
+.statusline[data-indicator="major"]    .dot { color: var(--status-major); }
+.statusline[data-indicator="critical"] .dot { color: var(--status-critical); }
+.statusline .desc { color: var(--text); }
+.statusline .refresh {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1;
+  padding: 2px 6px;
+}
+.statusline .refresh:hover { color: var(--text); border-color: var(--border-focused); }
+
+/* Cadence popup: small dark menu anchored to the chip. */
+.refresh-menu {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  margin: 2px 0 0;
+  padding: 2px;
+  list-style: none;
+  background: var(--panel-focused);
+  border: 1px solid var(--border-focused);
+  border-radius: 4px;
+  z-index: 5;
+  min-width: 56px;
+}
+.refresh-menu.hidden { display: none; }
+.refresh-menu li {
+  padding: 3px 8px;
+  font-size: 11px;
+  color: var(--text);
+  cursor: pointer;
+  border-radius: 3px;
+}
+.refresh-menu li:hover { background: var(--panel); }
+.refresh-menu li[data-current="1"] { color: var(--accent); font-weight: bold; }
+
+/* Incident sub-line: only shown when there's an active incident. */
+.incident { margin-top: 4px; font-size: 11px; }
+.incident.hidden { display: none; }
+.incident .incident-name::before { content: "\25B2 "; color: var(--running); }  /* ▲ */
+.incident .incident-name { color: var(--text); }
+.incident .incident-meta { color: var(--muted); margin-left: 4px; }
