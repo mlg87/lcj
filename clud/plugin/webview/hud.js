@@ -20,6 +20,7 @@ const els = {
   sessions:    document.getElementById("sessions"),
   lastUpdated: document.getElementById("last-updated"),
   template:    document.getElementById("session-card"),
+  strip:       document.querySelector(".strip"),
 };
 
 const ICON = { completed: "✓", in_progress: "▶", pending: "○" };
@@ -35,6 +36,8 @@ let lastSnapshot = null;
 let lastReceivedAt = 0;
 
 function render(snapshot) {
+  renderStrip(snapshot);   // global strip: independent of sessions[]
+
   if (!snapshot || !snapshot.sessions || snapshot.sessions.length === 0) {
     els.hud.dataset.state = "empty";
     // Drop stale cards so when sessions come back the DOM is fresh.
@@ -194,6 +197,124 @@ function renderCard(card, snap, focused) {
   clearBtn.classList.toggle("hidden", visible.length === 0);
 }
 
+// ---------------------------------------------------------------------------
+// Global usage + status strip (usage/status strip spec). Renders from
+// snapshot.usage / .status / .config. All text via textContent; glyphs are
+// CSS/static so a malicious status payload can't inject markup.
+
+const BUCKET_LABEL = { five_hour: "5h", seven_day: "wk" };
+
+function renderStrip(snapshot) {
+  const strip = els.strip;
+  if (!strip) return;
+  const usage = snapshot && snapshot.usage;
+  const status = snapshot && snapshot.status;
+  const config = (snapshot && snapshot.config) || { usage_poll_interval_s: 300 };
+
+  renderUsage(strip, usage);
+  renderStatus(strip, status);
+  renderRefreshChip(strip, config.usage_poll_interval_s);
+}
+
+function renderUsage(strip, usage) {
+  const unavailableEl = strip.querySelector(".usage-unavailable");
+  // Treat absent usage or ok:false as unavailable.
+  if (!usage || usage.ok === false) {
+    strip.dataset.usage = "unavailable";
+    unavailableEl.classList.remove("hidden");
+    unavailableEl.title = usage && usage.reason ? `usage unavailable (${usage.reason})` : "";
+    return;
+  }
+  strip.dataset.usage = "ok";
+  unavailableEl.classList.add("hidden");
+
+  for (const bucket of ["five_hour", "seven_day"]) {
+    const barEl = strip.querySelector(`.bar[data-bucket="${bucket}"]`);
+    if (!barEl) continue;
+    const data = usage[bucket];
+    const fill = barEl.querySelector(".fill");
+    const pct = barEl.querySelector(".bpct");
+    if (!data) {
+      // Bucket missing (e.g. only five_hour returned): show a muted dash.
+      fill.style.width = "0";
+      fill.dataset.level = "ok";
+      pct.textContent = "—";
+      barEl.title = "";
+      continue;
+    }
+    const util = clampPct(data.utilization);
+    fill.style.width = `${util}%`;
+    fill.dataset.level = util >= 90 ? "crit" : util >= 70 ? "warn" : "ok";
+    pct.textContent = `${util}%`;
+    barEl.title = data.resets_at ? `Resets ${formatResetsAt(data.resets_at)}` : "";
+  }
+}
+
+function renderStatus(strip, status) {
+  const line = strip.querySelector(".statusline");
+  const desc = line.querySelector(".desc");
+  const incident = strip.querySelector(".incident");
+
+  if (!status) {
+    line.dataset.indicator = "unknown";
+    desc.textContent = "status unknown";
+    incident.classList.add("hidden");
+    return;
+  }
+  line.dataset.indicator = status.indicator || "unknown";
+  desc.textContent = status.description || (status.ok === false ? "status unknown" : "");
+
+  const inc = status.incident;
+  if (inc) {
+    incident.classList.remove("hidden");
+    incident.querySelector(".incident-name").textContent = inc.name || "Active incident";
+    const parts = [];
+    if (inc.status) parts.push(inc.status);
+    if (inc.updated_at) parts.push(formatAgoISO(inc.updated_at));
+    incident.querySelector(".incident-meta").textContent = parts.join(" · ");
+    incident.title = inc.body || "";
+  } else {
+    incident.classList.add("hidden");
+    incident.title = "";
+  }
+}
+
+function renderRefreshChip(strip, intervalS) {
+  const btn = strip.querySelector(".refresh");
+  const seconds = Number.isInteger(intervalS) ? intervalS : 300;
+  btn.textContent = `${Math.round(seconds / 60)}m ⌄`;  // "5m ⌄"
+  // Mark the current item in the popup so it reads as selected.
+  for (const li of strip.querySelectorAll(".refresh-menu li")) {
+    li.dataset.current = Number(li.dataset.interval) === seconds ? "1" : "0";
+  }
+}
+
+function clampPct(v) {
+  const n = Math.round(Number(v) || 0);
+  return Math.max(0, Math.min(100, n));
+}
+
+// "in 2h 10m" / "in 3d 4h" from an ISO-8601 reset timestamp (future).
+function formatResetsAt(iso) {
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) return "";
+  const s = Math.max(0, Math.floor((ms - Date.now()) / 1000));
+  if (s < 60) return "in <1m";
+  const m = Math.floor(s / 60);
+  if (m < 60) return `in ${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `in ${h}h ${m % 60}m`;
+  return `in ${Math.floor(h / 24)}d ${h % 24}h`;
+}
+
+// Relative "Xm ago" from an ISO timestamp (reuses the same coarse buckets as
+// formatAgo, which takes epoch seconds).
+function formatAgoISO(iso) {
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) return "";
+  return formatAgo(Math.floor(ms / 1000));
+}
+
 // Wire the per-card "✕" clear button. Fired DELETE goes to the local
 // HudServer which atomic-writes an empty todos list for this session.
 // We optimistically clear the local DOM so the user gets instant feedback
@@ -313,3 +434,41 @@ source.onmessage = (event) => {
     console.error("bad snapshot", e);
   }
 };
+
+// Cadence selector: chip toggles the popup; picking an item PUTs the new
+// interval and optimistically updates the chip (the next snapshot confirms).
+(function wireRefreshMenu() {
+  const strip = els.strip;
+  if (!strip) return;
+  const btn = strip.querySelector(".refresh");
+  const menu = strip.querySelector(".refresh-menu");
+
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    menu.classList.toggle("hidden");
+  });
+
+  menu.addEventListener("click", async (e) => {
+    const li = e.target.closest("li[data-interval]");
+    if (!li) return;
+    const interval = Number(li.dataset.interval);
+    menu.classList.add("hidden");
+    // Optimistic chip update; the next config-bearing snapshot confirms.
+    renderRefreshChip(strip, interval);
+    try {
+      const resp = await fetch("/config/usage-interval", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ interval_s: interval }),
+      });
+      if (!resp.ok) {
+        console.error("set usage interval failed", resp.status, await resp.text().catch(() => ""));
+      }
+    } catch (err) {
+      console.error("set usage interval request error", err);
+    }
+  });
+
+  // Click anywhere else closes the popup.
+  document.addEventListener("click", () => menu.classList.add("hidden"));
+})();
