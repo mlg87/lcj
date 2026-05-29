@@ -56,6 +56,28 @@ Run after any change to hooks or plugin. Takes ~2 minutes.
    - Verify cards without `remote.json` are pixel-identical to before
      this PR — no stray whitespace at the end of the header, no glyph.
 
+## Usage + status strip
+
+1. **Usage bars populate.** With a valid Claude Code login, launch the HUD.
+   Within a few seconds the `5h` and `wk` bars show real percentages with
+   label+% inside the bar. Hover a bar → "Resets in …". (First run may show a
+   macOS Keychain prompt for `Claude Code-credentials` — click **Always Allow**.)
+2. **Traffic-light colors.** A bar < 70% is green, 70–89% amber, ≥ 90% red.
+3. **Usage unavailable.** `printf '{"ok":false,"reason":"expired"}' > ~/.claude/state/hud/usage.json`
+   → within ~1 tick the two bars collapse to a muted "usage unavailable"
+   (hover shows the reason). Delete the file or wait for the next fetch to recover.
+4. **Outage detail.** Seed a fake incident:
+   `printf '{"ok":true,"indicator":"minor","description":"Minor Service Outage","incident":{"name":"Elevated errors","status":"investigating","impact":"minor","body":"Investigating.","updated_at":"2026-05-28T19:04:00Z"}}' > ~/.claude/state/hud/status.json`
+   → the `▲ Elevated errors` line appears within ~1 tick; tooltip shows the body.
+   Restore by waiting for the next status fetch.
+5. **Status unknown ≠ green.** `printf '{"ok":false,"indicator":"unknown","description":"Status unavailable","incident":null}' > ~/.claude/state/hud/status.json`
+   → grey dot + "status unknown" (never green).
+6. **Cadence selector.** Click the `5m ⌄` chip, pick `1m` → chip updates
+   immediately; `cat ~/.claude/state/hud/config.json` shows `{"usage_poll_interval_s":60}`;
+   a fresh usage fetch happens within ~1 min.
+7. **Strip shows with no session.** Quit all Claude sessions → the strip stays
+   visible above "No Claude sessions running."
+
 If anything misbehaves, check:
 - `~/.claude/state/hud/errors.log` (hook errors)
 - iTerm's Python script console (plugin errors)
