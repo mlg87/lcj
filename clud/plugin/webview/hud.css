@@ -19,13 +19,23 @@
   --running: #fa0;
   --done: #7c7;
   --bar-track: #222;
-  --bar-ok:   #3ac46a;   /* <70%  green  */
-  --bar-warn: #e0a01e;   /* 70-89% amber */
-  --bar-crit: #e23b30;   /* >=90%  red   */
-  --status-none: #3ac46a;
-  --status-minor: #e0a01e;
-  --status-major: #e07a1e;
-  --status-critical: #e23b30;
+  /* One muted traffic-light palette shared by the usage bars AND the service
+     status dot, so the HUD never shows two different "greens". The earlier
+     values (#3ac46a/#e0a01e/#e23b30) were fully-saturated and read as harsh
+     blocks at bar size; these are desaturated/darkened to sit calmly against
+     the #0d0d0d panel while staying unambiguously green/amber/red. Tuned so
+     the --text (#ccc) bar labels remain legible over the fill. */
+  --tl-green:  #4f8a5f;  /* <70%  ok    */
+  --tl-amber:  #b8862f;  /* 70-89% warn  */
+  --tl-orange: #bd7032;  /* status: major */
+  --tl-red:    #b5544a;  /* >=90%  crit  */
+  --bar-ok:   var(--tl-green);
+  --bar-warn: var(--tl-amber);
+  --bar-crit: var(--tl-red);
+  --status-none: var(--tl-green);
+  --status-minor: var(--tl-amber);
+  --status-major: var(--tl-orange);
+  --status-critical: var(--tl-red);
   --status-unknown: #666;
 }
 
@@ -255,8 +265,11 @@ html, body {
   top: 0;
   line-height: 18px;
   font-size: 11px;
-  color: #eee;
-  text-shadow: 0 0 2px #000, 0 0 2px #000;  /* legible over fill AND track */
+  /* Palette --text rather than near-white: white-on-fill read as a harsh
+     callout. A single soft shadow keeps it legible over both the muted fill
+     and the dark track without the heavy double-black halo. */
+  color: var(--text);
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.55);
   z-index: 1;
 }
 .bar .blabel { left: 6px; font-weight: bold; }
