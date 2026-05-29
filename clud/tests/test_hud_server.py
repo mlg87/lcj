@@ -179,3 +179,40 @@ async def test_delete_todos_atomic_no_torn_writes(server_client: TestClient) -> 
     assert stragglers == [], f"left tmp files behind: {stragglers}"
     # Final state should be exactly the one expected file.
     assert sorted(p.name for p in session_dir.iterdir()) == ["todos.json"]
+
+
+# ---------------------------------------------------------------------------
+# PUT /config/usage-interval — backing for the strip's cadence selector.
+
+
+async def test_set_usage_interval_valid(server_client: TestClient) -> None:
+    state_dir: Path = server_client.app["state_dir"]
+    resp = await server_client.put("/config/usage-interval", json={"interval_s": 120})
+    assert resp.status == 204
+    saved = json.loads((state_dir / "config.json").read_text())
+    assert saved == {"usage_poll_interval_s": 120}
+
+
+async def test_set_usage_interval_rejects_out_of_set(server_client: TestClient) -> None:
+    resp = await server_client.put("/config/usage-interval", json={"interval_s": 45})
+    assert resp.status == 400
+
+
+async def test_set_usage_interval_rejects_non_int(server_client: TestClient) -> None:
+    resp = await server_client.put("/config/usage-interval", json={"interval_s": "300"})
+    assert resp.status == 400
+
+
+async def test_set_usage_interval_rejects_bad_body(server_client: TestClient) -> None:
+    resp = await server_client.put(
+        "/config/usage-interval", data="not json", headers={"Content-Type": "application/json"}
+    )
+    assert resp.status == 400
+
+
+async def test_set_usage_interval_atomic_no_tmp(server_client: TestClient) -> None:
+    state_dir: Path = server_client.app["state_dir"]
+    resp = await server_client.put("/config/usage-interval", json={"interval_s": 1800})
+    assert resp.status == 204
+    stragglers = [p.name for p in state_dir.iterdir() if p.name.startswith(".tmp")]
+    assert stragglers == []

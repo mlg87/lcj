@@ -12,6 +12,48 @@
     so the JS stays small and the markup stays declarative.
   -->
   <main id="hud" class="hud" data-state="empty">
+    <!--
+      Global usage + status strip (usage/status strip spec, 2026-05-28).
+      Account-global, not per-session, so it lives outside the empty/sessions
+      toggle and shows in both states. Two traffic-light bars with label+%
+      INSIDE the bar; a minimalist status dot that expands on active outages;
+      a cadence chip whose popup sets the usage-poll interval.
+      All snapshot text is written via textContent in hud.js; every glyph
+      (●, ▲, ⌄) is static markup/CSS so a status payload can't inject markup.
+    -->
+    <section class="strip" data-usage="unknown">
+      <div class="usage">
+        <div class="bar" data-bucket="five_hour" title="">
+          <div class="fill" data-level="ok"></div>
+          <span class="blabel">5h</span>
+          <span class="bpct">—</span>
+        </div>
+        <div class="bar" data-bucket="seven_day" title="">
+          <div class="fill" data-level="ok"></div>
+          <span class="blabel">wk</span>
+          <span class="bpct">—</span>
+        </div>
+        <div class="usage-unavailable hidden" title="">usage unavailable</div>
+      </div>
+      <div class="statusline" data-indicator="unknown">
+        <span class="dot" aria-hidden="true"></span>
+        <span class="desc">status unknown</span>
+        <button class="refresh" type="button" title="Usage refresh interval">5m&nbsp;⌄</button>
+        <ul class="refresh-menu hidden">
+          <li data-interval="60">1m</li>
+          <li data-interval="120">2m</li>
+          <li data-interval="300">5m</li>
+          <li data-interval="600">10m</li>
+          <li data-interval="900">15m</li>
+          <li data-interval="1800">30m</li>
+        </ul>
+      </div>
+      <div class="incident hidden">
+        <span class="incident-name"></span>
+        <span class="incident-meta"></span>
+      </div>
+    </section>
+
     <section class="empty">
       <p>No Claude sessions running.</p>
     </section>

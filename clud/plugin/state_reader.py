@@ -31,6 +31,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from hud_config import read_usage_interval  # type: ignore[import-not-found]
+
 # How many trailing bytes of a session transcript we scan for the latest
 # `custom-title` event (issue #5). 256 KiB is enough to comfortably hold the
 # tail of a long-running session — a single custom-title line is ~120 bytes,
@@ -38,6 +40,16 @@ from typing import Any
 # linear cost on multi-megabyte transcripts. Tuned with the 200ms poll
 # cadence and the single-slot mtime cache below in mind.
 _TRANSCRIPT_TAIL_BYTES = 256 * 1024
+
+# Allowed overall-status indicators; anything else (or a failed fetch) renders
+# as "unknown" — never as operational/green.
+_STATUS_INDICATORS = {"none", "minor", "major", "critical", "unknown"}
+
+
+def _cap_str(value: object, limit: int) -> str | None:
+    """Coerce to a length-capped str, or None. Defense-in-depth so a long
+    blob from a status payload (or a hand-edited file) can't bloat the DOM."""
+    return value[:limit] if isinstance(value, str) else None
 
 
 class StateReader:
@@ -140,7 +152,68 @@ class StateReader:
                 snap = self.snapshot_for_tty(tty)
                 if snap is not None:
                     sessions.append(snap)
-        return {"focused_tty": focused_tty, "sessions": sessions}
+        return {
+            "focused_tty": focused_tty,
+            "sessions": sessions,
+            "usage": self._read_usage(),
+            "status": self._read_status(),
+            "config": {"usage_poll_interval_s": read_usage_interval(self._dir)},
+        }
+
+    def _read_usage(self) -> dict[str, Any] | None:
+        """Global usage snapshot from usage.json (None if absent/corrupt)."""
+        doc = self._load_json(self._dir / "usage.json")
+        if not isinstance(doc, dict):
+            return None
+        return self._normalize_usage(doc)
+
+    @staticmethod
+    def _normalize_usage(doc: dict[str, Any]) -> dict[str, Any]:
+        out: dict[str, Any] = {"ok": bool(doc.get("ok"))}
+        reason = doc.get("reason")
+        if isinstance(reason, str):
+            out["reason"] = reason
+        for key in ("five_hour", "seven_day"):
+            bucket = doc.get(key)
+            if isinstance(bucket, dict):
+                util = bucket.get("utilization")
+                if isinstance(util, (int, float)) and not isinstance(util, bool):
+                    resets = bucket.get("resets_at")
+                    out[key] = {
+                        "utilization": max(0, min(100, round(util))),
+                        "resets_at": resets if isinstance(resets, str) else None,
+                    }
+        return out
+
+    def _read_status(self) -> dict[str, Any] | None:
+        """Global service-status snapshot from status.json (None if absent)."""
+        doc = self._load_json(self._dir / "status.json")
+        if not isinstance(doc, dict):
+            return None
+        return self._normalize_status(doc)
+
+    @staticmethod
+    def _normalize_status(doc: dict[str, Any]) -> dict[str, Any]:
+        indicator = doc.get("indicator")
+        indicator = indicator if indicator in _STATUS_INDICATORS else "unknown"
+        description = doc.get("description")
+        description = description[:200] if isinstance(description, str) else ""
+        incident: dict[str, Any] | None = None
+        raw = doc.get("incident")
+        if isinstance(raw, dict):
+            incident = {
+                "name": _cap_str(raw.get("name"), 120),
+                "status": _cap_str(raw.get("status"), 32),
+                "impact": _cap_str(raw.get("impact"), 32),
+                "body": _cap_str(raw.get("body"), 500),
+                "updated_at": _cap_str(raw.get("updated_at"), 40),
+            }
+        return {
+            "ok": bool(doc.get("ok")),
+            "indicator": indicator,
+            "description": description,
+            "incident": incident,
+        }
 
     @staticmethod
     def _load_json(path: Path) -> Any:
