@@ -34,6 +34,8 @@ from pathlib import Path
 from typing import Any
 
 from aiohttp import web
+from hud_config import ALLOWED_USAGE_INTERVALS_S  # type: ignore[import-not-found]
+from state_io import atomic_write_json  # type: ignore[import-not-found]
 
 # Defense-in-depth: even though aiohttp won't put `/` in a path param, we
 # explicitly validate the session id format on the DELETE route below so
@@ -62,6 +64,9 @@ class HudServer:
         # HUD card's Todos section drops back to 0/0 within one poll tick.
         # 127.0.0.1-bound listener + strict sid regex = no auth needed.
         self.app.router.add_delete("/sessions/{sid}/todos", self._clear_todos)
+        # Cadence selector backing: the strip's "5m ⌄" chip PUTs the chosen
+        # usage-poll interval here. Constrained integer -> no injection surface.
+        self.app.router.add_put("/config/usage-interval", self._set_usage_interval)
         # Static route after specific routes — order matters for aiohttp.
         self.app.router.add_static("/", self._webview_dir, show_index=False)
 
@@ -170,6 +175,27 @@ class HudServer:
             tmp.unlink(missing_ok=True)
             return web.Response(status=500, text=f"write failed: {e!s}")
 
+        return web.Response(status=204)
+
+    async def _set_usage_interval(self, request: web.Request) -> web.Response:
+        """Persist the usage-poll interval the user picked in the strip.
+
+        Validates against the single allowed set (hud_config) and atomic-writes
+        config.json; the usage fetcher hot-reloads it on its next tick. 400 on
+        anything that isn't one of the allowed integers.
+        """
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return web.Response(status=400, text="invalid json")
+        interval = body.get("interval_s") if isinstance(body, dict) else None
+        if (
+            not isinstance(interval, int)
+            or isinstance(interval, bool)
+            or interval not in ALLOWED_USAGE_INTERVALS_S
+        ):
+            return web.Response(status=400, text="invalid interval")
+        atomic_write_json(self._state_dir / "config.json", {"usage_poll_interval_s": interval})
         return web.Response(status=204)
 
     @staticmethod
