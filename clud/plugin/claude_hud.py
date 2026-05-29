@@ -54,7 +54,9 @@ import iterm2
 from hud_server import HudServer  # type: ignore[import-not-found]
 from iterm2.tool import async_register_web_view_tool
 from state_reader import StateReader  # type: ignore[import-not-found]
+from status_fetcher import StatusFetcher  # type: ignore[import-not-found]
 from tty_resolver import TtyResolver  # type: ignore[import-not-found]
+from usage_fetcher import UsageFetcher  # type: ignore[import-not-found]
 
 STATE_DIR = Path("~/.claude/state/hud").expanduser()
 POLL_INTERVAL_S = 0.2
@@ -64,6 +66,12 @@ TOOL_IDENTIFIER = "com.masongoetz.claude.hud"
 TOOL_DISPLAY_NAME = "Claude HUD"
 
 log = logging.getLogger("claude_hud")
+
+# asyncio keeps only weak references to tasks, so a fire-and-forget
+# create_task() result can be garbage-collected mid-run. Hold strong refs in
+# a module-level set (the pattern from the asyncio docs) and self-remove on
+# completion. The fetchers run for the process lifetime, so they stay here.
+_background_tasks: set[asyncio.Task[None]] = set()
 
 
 async def main(connection: iterm2.Connection) -> None:  # type: ignore[name-defined]
@@ -90,6 +98,19 @@ async def main(connection: iterm2.Connection) -> None:  # type: ignore[name-defi
     )
 
     reader = StateReader(STATE_DIR)
+
+    # Usage + status are account-global, not per-session. Two timer-driven
+    # fetchers write usage.json / status.json which StateReader folds into the
+    # snapshot (see the usage/status strip spec). They run concurrently with
+    # the poll loop; each owns its own cadence (usage: config-driven; status:
+    # 60s) and never raises into this loop.
+    usage_fetcher = UsageFetcher(STATE_DIR)
+    status_fetcher = StatusFetcher(STATE_DIR)
+    for coro in (usage_fetcher.run(), status_fetcher.run()):
+        task = asyncio.create_task(coro)
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
+
     resolver = TtyResolver(STATE_DIR)
     app = await iterm2.async_get_app(connection)  # type: ignore[attr-defined]
     assert app is not None  # iTerm always provides one when the plugin is running
