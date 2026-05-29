@@ -14,8 +14,15 @@ requires-python = ">=3.12"
 # Runtime deps for the iTerm Python plugin. iterm2 is the official
 # binding for iTerm's WebSocket Python API; aiohttp powers our local
 # HTTP server that hosts the webview + SSE push channel.
+#
+# certifi: iTerm's bundled Python (iterm2env) ships no populated CA store,
+# so aiohttp's default SSL context can't verify any HTTPS cert and BOTH
+# outbound fetchers (usage + status) failed with CERTIFICATE_VERIFY_FAILED —
+# the "usage unavailable" / "Status unavailable" strip. We pin verification
+# to certifi's bundle (see plugin/ssl_support.py).
 dependencies = [
     "aiohttp>=3.9",
+    "certifi>=2024.2.2",
     "iterm2>=2.7",
 ]
 

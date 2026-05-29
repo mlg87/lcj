@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 import aiohttp
+from ssl_support import default_ssl_context  # type: ignore[import-not-found]
 from state_io import atomic_write_json  # type: ignore[import-not-found]
 
 log = logging.getLogger("claude_hud.status")
@@ -29,7 +30,11 @@ HttpGet = Callable[[str, "str | None"], Awaitable[tuple[int, dict[str, str], str
 async def _default_http_get(url: str, etag: str | None) -> tuple[int, dict[str, str], str]:
     headers = {"If-None-Match": etag} if etag else {}
     timeout = aiohttp.ClientTimeout(total=15)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
+    # certifi-backed TLS verification — iterm2env's Python has no CA store of
+    # its own (see ssl_support). Without this the GET raises and we'd write
+    # the "Status unavailable" ok:false file forever.
+    connector = aiohttp.TCPConnector(ssl=default_ssl_context())
+    async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
         async with session.get(url, headers=headers) as resp:
             return resp.status, dict(resp.headers), await resp.text()
 

@@ -138,7 +138,9 @@ version = 1.0
 
 [options]
 scripts = claude_hud/claude_hud.py
-install_requires = iterm2; aiohttp
+# certifi: iterm2env's Python has no CA store, so aiohttp can't verify HTTPS
+# certs without it — both usage and status fetchers fail otherwise.
+install_requires = iterm2; aiohttp; certifi
 python_requires = =3.14.0
 
 [iterm2]
@@ -168,10 +170,12 @@ cat <<EOF
    (iTerm refuses to launch the script without this — there's no way to
     skip the wizard and bring your own venv.)
 3. Re-run this installer so the plugin sources overwrite the stub iTerm wrote.
-4. Install the runtime dep into iTerm's bundled Python. Use 'python3 -m pip'
+4. Install the runtime deps into iTerm's bundled Python. Use 'python3 -m pip'
    because pip3's shebang is templated and breaks when invoked directly:
-     "\$(ls -d "$PLUGIN_DEST/iterm2env/versions/"*/bin/python3 | head -1)" -m pip install aiohttp
-   (iterm2 is preinstalled by the Full Environment.)
+     "\$(ls -d "$PLUGIN_DEST/iterm2env/versions/"*/bin/python3 | head -1)" -m pip install aiohttp certifi
+   (iterm2 is preinstalled by the Full Environment. certifi supplies the CA
+    bundle iterm2env's Python lacks — without it both fetchers fail TLS
+    verification and the strip shows "usage/Status unavailable".)
 5. Restart iTerm. The plugin auto-launches; check it with:
      ps -ef | grep claude_hud
 6. View → Toolbelt → Show Toolbelt   (⌘⇧B)

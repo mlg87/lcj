@@ -25,6 +25,7 @@ from typing import Any
 
 import aiohttp
 from hud_config import read_usage_interval  # type: ignore[import-not-found]
+from ssl_support import default_ssl_context  # type: ignore[import-not-found]
 from state_io import atomic_write_json  # type: ignore[import-not-found]
 from token_resolver import TokenResult, resolve_token  # type: ignore[import-not-found]
 
@@ -63,7 +64,11 @@ def detect_claude_version(runner: Callable[[], str | None] | None = None) -> str
 
 async def _default_http_get(url: str, headers: dict[str, str]) -> tuple[int, str]:
     timeout = aiohttp.ClientTimeout(total=15)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
+    # certifi-backed TLS verification — iterm2env's Python has no CA store of
+    # its own (see ssl_support). Without this the GET raises and we'd write
+    # the ok:false {"reason":"network"} usage.json forever.
+    connector = aiohttp.TCPConnector(ssl=default_ssl_context())
+    async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
         async with session.get(url, headers=headers) as resp:
             return resp.status, await resp.text()
 
