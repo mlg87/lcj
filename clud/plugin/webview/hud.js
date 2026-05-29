@@ -201,8 +201,8 @@ function renderCard(card, snap, focused) {
 // Global usage + status strip (usage/status strip spec). Renders from
 // snapshot.usage / .status / .config. All text via textContent; glyphs are
 // CSS/static so a malicious status payload can't inject markup.
-
-const BUCKET_LABEL = { five_hour: "5h", seven_day: "wk" };
+// The "5h" / "wk" bar labels are static markup in index.html, so JS only
+// needs the bucket keys (five_hour / seven_day) below.
 
 function renderStrip(snapshot) {
   const strip = els.strip;
