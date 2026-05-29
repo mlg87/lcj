@@ -243,7 +243,13 @@ def _seed_two_sessions(tmp_path: Path) -> None:
 def test_snapshot_all_empty_when_no_tty_map(reader: StateReader) -> None:
     """Always returns a dict (never None) so the SSE has a stable shape."""
     snap = reader.snapshot_all("/dev/ttys000")
-    assert snap == {"focused_tty": "/dev/ttys000", "sessions": []}
+    assert snap == {
+        "focused_tty": "/dev/ttys000",
+        "sessions": [],
+        "usage": None,
+        "status": None,
+        "config": {"usage_poll_interval_s": 300},
+    }
 
 
 def test_snapshot_all_returns_each_session(reader: StateReader, tmp_path: Path) -> None:
@@ -317,7 +323,13 @@ def test_snapshot_all_focused_tty_passthrough_when_no_focus(reader: StateReader)
 def test_snapshot_all_handles_corrupt_tty_map(reader: StateReader, tmp_path: Path) -> None:
     (tmp_path / "tty-map.json").write_text("{not json")
     snap = reader.snapshot_all("/dev/ttys000")
-    assert snap == {"focused_tty": "/dev/ttys000", "sessions": []}
+    assert snap == {
+        "focused_tty": "/dev/ttys000",
+        "sessions": [],
+        "usage": None,
+        "status": None,
+        "config": {"usage_poll_interval_s": 300},
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -609,3 +621,81 @@ def test_remote_control_boolean_timestamp_rejected(reader: StateReader, tmp_path
     snap = reader.snapshot_for_tty("/dev/ttys003")
     assert snap is not None
     assert snap["session"]["remote_control"] == {"channel": None, "last_remote_at": None}
+
+
+# ---------------------------------------------------------------------------
+# Global usage / status / config — added to snapshot_all() for the top strip.
+
+
+def test_snapshot_all_usage_absent_is_none(reader: StateReader) -> None:
+    assert reader.snapshot_all(None)["usage"] is None
+
+
+def test_snapshot_all_usage_normalized(reader: StateReader, tmp_path: Path) -> None:
+    _write(
+        tmp_path / "usage.json",
+        {
+            "ok": True,
+            "updated_at": 1,
+            "five_hour": {"utilization": 152, "resets_at": "2026-05-28T07:50:00Z"},
+            "seven_day": {"utilization": 22, "resets_at": None},
+        },
+    )
+    usage = reader.snapshot_all(None)["usage"]
+    assert usage["ok"] is True
+    assert usage["five_hour"]["utilization"] == 100  # clamped
+    assert usage["five_hour"]["resets_at"] == "2026-05-28T07:50:00Z"
+    assert usage["seven_day"]["utilization"] == 22
+
+
+def test_snapshot_all_usage_unavailable(reader: StateReader, tmp_path: Path) -> None:
+    _write(tmp_path / "usage.json", {"ok": False, "reason": "expired", "updated_at": 1})
+    usage = reader.snapshot_all(None)["usage"]
+    assert usage == {"ok": False, "reason": "expired"}
+
+
+def test_snapshot_all_usage_corrupt_is_none(reader: StateReader, tmp_path: Path) -> None:
+    (tmp_path / "usage.json").write_text("{not json")
+    assert reader.snapshot_all(None)["usage"] is None
+
+
+def test_snapshot_all_status_normalized(reader: StateReader, tmp_path: Path) -> None:
+    _write(
+        tmp_path / "status.json",
+        {
+            "ok": True,
+            "updated_at": 1,
+            "indicator": "minor",
+            "description": "Minor Service Outage",
+            "incident": {
+                "name": "X" * 200,  # over the 120 cap
+                "status": "investigating",
+                "impact": "minor",
+                "body": "Y" * 600,  # over the 500 cap
+                "updated_at": "2026-05-28T19:04:00Z",
+            },
+        },
+    )
+    status = reader.snapshot_all(None)["status"]
+    assert status["indicator"] == "minor"
+    assert len(status["incident"]["name"]) == 120
+    assert len(status["incident"]["body"]) == 500
+
+
+def test_snapshot_all_status_unknown_indicator_constrained(
+    reader: StateReader, tmp_path: Path
+) -> None:
+    _write(
+        tmp_path / "status.json",
+        {"ok": True, "indicator": "weird", "description": "?", "incident": None},
+    )
+    assert reader.snapshot_all(None)["status"]["indicator"] == "unknown"
+
+
+def test_snapshot_all_config_default_when_absent(reader: StateReader) -> None:
+    assert reader.snapshot_all(None)["config"] == {"usage_poll_interval_s": 300}
+
+
+def test_snapshot_all_config_reads_valid_value(reader: StateReader, tmp_path: Path) -> None:
+    _write(tmp_path / "config.json", {"usage_poll_interval_s": 120})
+    assert reader.snapshot_all(None)["config"] == {"usage_poll_interval_s": 120}
