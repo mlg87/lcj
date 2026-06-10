@@ -226,6 +226,12 @@ function renderStrip(snapshot) {
   const status = snapshot && snapshot.status;
   const config = (snapshot && snapshot.config) || { usage_poll_interval_s: 300 };
 
+  // Adopt the host's 12/24-hour override before anything formats a clock
+  // time (renderStrip runs before the cards render). Allowlisted because an
+  // arbitrary string would make Intl throw RangeError mid-render.
+  clockHourCycle =
+    config.hour_cycle === "h23" || config.hour_cycle === "h12" ? config.hour_cycle : null;
+
   renderUsage(strip, usage);
   renderStatus(strip, status);
   renderRefreshChip(strip, config.usage_poll_interval_s);
@@ -313,15 +319,24 @@ function clampPct(v) {
   return Math.max(0, Math.min(100, n));
 }
 
-// "9:30 PM" / "21:30" — toLocaleTimeString with no explicit hour12 so the
-// system locale's hour cycle is honored. When the timestamp falls on a
-// different calendar day than now (weekly reset, session started before
+// Host 12/24-hour override ("h23" | "h12" | null), adopted from snapshot
+// config in renderStrip. Needed because browser engines hide the OS-level
+// time-format setting from web content (fingerprinting surface) — Intl here
+// only sees the raw locale, so an en_US Mac with "24-Hour Time" enabled
+// would wrongly render 12-hour without it. null = trust the locale default.
+let clockHourCycle = null;
+
+// "9:30 PM" / "21:30" — locale-formatted, with the host's 12/24-hour
+// override applied when known (see clockHourCycle). When the timestamp falls
+// on a different calendar day than now (weekly reset, session started before
 // midnight) a short weekday is prefixed: "Thu 9:30 PM". Shared by the
 // usage-bar reset text and the card-footer start time so the two can't
 // drift apart in format.
 function formatClockAt(epochMs) {
   const d = new Date(epochMs);
-  const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const opts = { hour: "numeric", minute: "2-digit" };
+  if (clockHourCycle) opts.hourCycle = clockHourCycle;
+  const time = d.toLocaleTimeString([], opts);
   const now = new Date();
   const sameDay =
     d.getFullYear() === now.getFullYear() &&

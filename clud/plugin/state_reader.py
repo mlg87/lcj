@@ -32,7 +32,11 @@ import time
 from pathlib import Path
 from typing import Any
 
-from hud_config import read_usage_interval  # type: ignore[import-not-found]
+from hud_config import (  # type: ignore[import-not-found]
+    GLOBAL_PREFS_PLIST,
+    read_system_hour_cycle,
+    read_usage_interval,
+)
 
 # How many trailing bytes of a session transcript we scan for the latest
 # `custom-title` event (issue #5). 256 KiB is enough to comfortably hold the
@@ -66,8 +70,11 @@ def _epoch_or_none(value: object) -> int | None:
 
 
 class StateReader:
-    def __init__(self, state_dir: Path) -> None:
+    def __init__(self, state_dir: Path, global_prefs_path: Path | None = None) -> None:
         self._dir = state_dir
+        # Where the macOS 12/24-hour override lives. Injectable so tests don't
+        # depend on the host machine's clock setting.
+        self._global_prefs_path = global_prefs_path or GLOBAL_PREFS_PLIST
         # Cache of custom-title lookups keyed by transcript path. Value is
         # (mtime, size, custom_title). The 200ms poll loop hits this method
         # 5x/sec per session — without caching we'd re-read 256KB per call
@@ -76,6 +83,10 @@ class StateReader:
         # might collide briefly under fast typing) and a same-size overwrite
         # are both detected.
         self._title_cache: dict[str, tuple[float, int, str | None]] = {}
+        # (mtime, size, hour_cycle) cache for the GlobalPreferences plist —
+        # same rationale as the title cache: the plist is parsed only when it
+        # actually changes, not 5x/sec.
+        self._hour_cycle_cache: tuple[float, int, str | None] | None = None
 
     def snapshot_for_tty(self, tty: str | None) -> dict[str, Any] | None:
         """Return the full snapshot for the session attached to `tty`, or None.
@@ -173,8 +184,28 @@ class StateReader:
             "sessions": sessions,
             "usage": self._read_usage(),
             "status": self._read_status(),
-            "config": {"usage_poll_interval_s": read_usage_interval(self._dir)},
+            "config": {
+                "usage_poll_interval_s": read_usage_interval(self._dir),
+                "hour_cycle": self._system_hour_cycle(),
+            },
         }
+
+    def _system_hour_cycle(self) -> str | None:
+        """Mtime/size-cached wrapper around read_system_hour_cycle so the
+        5x/sec poll loop doesn't re-parse GlobalPreferences (other apps write
+        to it constantly enough that a parse-every-call would add up)."""
+        try:
+            st = self._global_prefs_path.stat()
+        except OSError:
+            return None
+        cached = self._hour_cycle_cache
+        if cached is not None and cached[0] == st.st_mtime and cached[1] == st.st_size:
+            return cached[2]
+        # Explicit annotation: hud_config is imported flat (no package), so
+        # mypy sees its functions as Any.
+        value: str | None = read_system_hour_cycle(self._global_prefs_path)
+        self._hour_cycle_cache = (st.st_mtime, st.st_size, value)
+        return value
 
     def _read_usage(self) -> dict[str, Any] | None:
         """Global usage snapshot from usage.json (None if absent/corrupt)."""

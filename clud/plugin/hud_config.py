@@ -12,7 +12,12 @@ normalizes to the 5-minute default — a bad config must never break fetching.
 from __future__ import annotations
 
 import json
+import plistlib
 from pathlib import Path
+
+# macOS stores the Date & Time "24-Hour Time" toggle as an ICU override in
+# the user's GlobalPreferences, not in the locale itself.
+GLOBAL_PREFS_PLIST = Path("~/Library/Preferences/.GlobalPreferences.plist").expanduser()
 
 # WHY these six values: the user-facing menu is 1/2/5/10/15/30 minutes.
 ALLOWED_USAGE_INTERVALS_S: tuple[int, ...] = (60, 120, 300, 600, 900, 1800)
@@ -44,3 +49,29 @@ def read_usage_interval(state_dir: Path) -> int:
     if not isinstance(doc, dict):
         return DEFAULT_USAGE_INTERVAL_S
     return normalize_interval(doc.get("usage_poll_interval_s"))
+
+
+def read_system_hour_cycle(plist_path: Path = GLOBAL_PREFS_PLIST) -> str | None:
+    """Resolve the macOS 12/24-hour override: "h23", "h12", or None.
+
+    Browser engines deliberately hide OS-level time-format overrides from web
+    content (it's a fingerprinting surface), so the webview's Intl only sees
+    the raw locale default — wrong on e.g. an en_US Mac with "24-Hour Time"
+    enabled. The plugin process reads the override here and ships it to the
+    webview via the snapshot config (PR #17 follow-up). None means "no
+    override": let the locale default stand. 24h wins if both keys are
+    somehow set, so a stale 12h leftover can't downgrade an explicit choice.
+    Never raises — a missing/corrupt plist is just "no override".
+    """
+    try:
+        with plist_path.open("rb") as f:
+            prefs = plistlib.load(f)
+    except (OSError, plistlib.InvalidFileException, ValueError):
+        return None
+    if not isinstance(prefs, dict):
+        return None
+    if prefs.get("AppleICUForce24HourTime"):
+        return "h23"
+    if prefs.get("AppleICUForce12HourTime"):
+        return "h12"
+    return None
