@@ -9,6 +9,7 @@ even if half the state files don't exist yet.
 from __future__ import annotations
 
 import json
+import plistlib
 from pathlib import Path
 
 import pytest
@@ -19,7 +20,9 @@ from plugin.state_reader import StateReader
 @pytest.fixture
 def reader(tmp_path: Path) -> StateReader:
     (tmp_path / "sessions").mkdir()
-    return StateReader(tmp_path)
+    # Point the macOS hour-cycle lookup at a nonexistent file so snapshots are
+    # deterministic (hour_cycle: None) regardless of the host's clock setting.
+    return StateReader(tmp_path, global_prefs_path=tmp_path / "global-prefs.plist")
 
 
 def _write(p: Path, data: dict) -> None:
@@ -304,8 +307,17 @@ def test_snapshot_all_empty_when_no_tty_map(reader: StateReader) -> None:
         "sessions": [],
         "usage": None,
         "status": None,
-        "config": {"usage_poll_interval_s": 300},
+        "config": {"usage_poll_interval_s": 300, "hour_cycle": None},
     }
+
+
+def test_snapshot_all_carries_system_hour_cycle(reader: StateReader, tmp_path: Path) -> None:
+    """The macOS 24-hour override reaches the webview via snapshot config —
+    Intl in the webview can't see it (browsers hide OS format overrides)."""
+    with (tmp_path / "global-prefs.plist").open("wb") as f:
+        plistlib.dump({"AppleICUForce24HourTime": True}, f)
+    snap = reader.snapshot_all(None)
+    assert snap["config"]["hour_cycle"] == "h23"
 
 
 def test_snapshot_all_returns_each_session(reader: StateReader, tmp_path: Path) -> None:
@@ -384,7 +396,7 @@ def test_snapshot_all_handles_corrupt_tty_map(reader: StateReader, tmp_path: Pat
         "sessions": [],
         "usage": None,
         "status": None,
-        "config": {"usage_poll_interval_s": 300},
+        "config": {"usage_poll_interval_s": 300, "hour_cycle": None},
     }
 
 
@@ -749,9 +761,15 @@ def test_snapshot_all_status_unknown_indicator_constrained(
 
 
 def test_snapshot_all_config_default_when_absent(reader: StateReader) -> None:
-    assert reader.snapshot_all(None)["config"] == {"usage_poll_interval_s": 300}
+    assert reader.snapshot_all(None)["config"] == {
+        "usage_poll_interval_s": 300,
+        "hour_cycle": None,
+    }
 
 
 def test_snapshot_all_config_reads_valid_value(reader: StateReader, tmp_path: Path) -> None:
     _write(tmp_path / "config.json", {"usage_poll_interval_s": 120})
-    assert reader.snapshot_all(None)["config"] == {"usage_poll_interval_s": 120}
+    assert reader.snapshot_all(None)["config"] == {
+        "usage_poll_interval_s": 120,
+        "hour_cycle": None,
+    }
