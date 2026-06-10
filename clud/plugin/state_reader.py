@@ -55,13 +55,14 @@ def _cap_str(value: object, limit: int) -> str | None:
 
 def _epoch_or_none(value: object) -> int | None:
     """Coerce to an int epoch-seconds value, or None. bool is excluded
-    explicitly (it subclasses int), and non-finite floats are rejected so a
-    hand-edited meta.json can never leak NaN/inf to the webview."""
+    explicitly (it subclasses int), and non-finite floats and negatives are
+    rejected so a hand-edited meta.json can never leak NaN/inf or a pre-epoch
+    clock time to the webview. Matches _normalize_remote's >=0 convention."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     if not math.isfinite(value):
         return None
-    return int(value)
+    return int(value) if value >= 0 else None
 
 
 class StateReader:

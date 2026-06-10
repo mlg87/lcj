@@ -119,6 +119,8 @@ def test_missing_optional_files(reader: StateReader, tmp_path: Path) -> None:
 _OMIT = object()
 
 
+# Separate from _seed_session_with_meta below: needs meta_overrides + _OMIT
+# support for the started_at edge cases, but doesn't need a session_dir handle.
 def _seed_session(tmp_path: Path, meta_overrides: dict) -> None:
     """Minimal tty-map + meta.json so snapshot_for_tty('/dev/ttys003') resolves.
 
@@ -153,7 +155,7 @@ def test_started_at_missing_is_none(reader: StateReader, tmp_path: Path) -> None
 def test_started_at_non_numeric_is_none(reader: StateReader, tmp_path: Path) -> None:
     # A hand-edited or corrupt meta.json must never raise or leak a non-epoch
     # value to the webview. True is the nasty case: bool is an int subclass.
-    for bad in ("soon", True, None, [1000]):
+    for bad in ("soon", True, None, [1000], -5):
         _seed_session(tmp_path, {"started_at": bad})
         snap = reader.snapshot_for_tty("/dev/ttys003")
         assert snap is not None
