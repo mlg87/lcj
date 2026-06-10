@@ -260,7 +260,7 @@ html, body {
 }
 .bar .fill[data-level="warn"] { background: var(--bar-warn); }
 .bar .fill[data-level="crit"] { background: var(--bar-crit); }
-.bar .blabel, .bar .bpct {
+.bar .blabel, .bar .breset, .bar .bpct {
   position: absolute;
   top: 0;
   line-height: 18px;
@@ -274,6 +274,9 @@ html, body {
 }
 .bar .blabel { left: 6px; font-weight: bold; }
 .bar .bpct   { right: 6px; font-variant-numeric: tabular-nums; }
+/* Full-width + text-align keeps the reset text optically centered in the
+   bar regardless of how wide the label and percentage are. */
+.bar .breset { left: 0; right: 0; text-align: center; }
 
 /* When usage is unavailable, the two bars hide and this single muted line
    shows instead (JS toggles .hidden + data-usage on .strip). */

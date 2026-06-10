@@ -202,7 +202,8 @@ function renderCard(card, snap, focused) {
 // snapshot.usage / .status / .config. All text via textContent; glyphs are
 // CSS/static so a malicious status payload can't inject markup.
 // The "5h" / "wk" bar labels are static markup in index.html, so JS only
-// needs the bucket keys (five_hour / seven_day) below.
+// needs the bucket keys (five_hour / seven_day) below. Each bar shows its
+// window's reset time centered in the bar ("Resets @ 9:30 PM").
 
 function renderStrip(snapshot) {
   const strip = els.strip;
@@ -234,19 +235,23 @@ function renderUsage(strip, usage) {
     const data = usage[bucket];
     const fill = barEl.querySelector(".fill");
     const pct = barEl.querySelector(".bpct");
+    const reset = barEl.querySelector(".breset");
     if (!data) {
       // Bucket missing (e.g. only five_hour returned): show a muted dash.
       fill.style.width = "0";
       fill.dataset.level = "ok";
       pct.textContent = "—";
-      barEl.title = "";
+      reset.textContent = "";
       continue;
     }
     const util = clampPct(data.utilization);
     fill.style.width = `${util}%`;
     fill.dataset.level = util >= 90 ? "crit" : util >= 70 ? "warn" : "ok";
     pct.textContent = `${util}%`;
-    barEl.title = data.resets_at ? `Resets ${formatResetsAt(data.resets_at)}` : "";
+    // Reset time lives centered in the bar (was a hover tooltip). Unparsable
+    // or absent resets_at renders as no text rather than "Resets @ ".
+    const resetMs = data.resets_at ? Date.parse(data.resets_at) : NaN;
+    reset.textContent = Number.isFinite(resetMs) ? `Resets @ ${formatClockAt(resetMs)}` : "";
   }
 }
 
@@ -294,17 +299,22 @@ function clampPct(v) {
   return Math.max(0, Math.min(100, n));
 }
 
-// "in 2h 10m" / "in 3d 4h" from an ISO-8601 reset timestamp (future).
-function formatResetsAt(iso) {
-  const ms = Date.parse(iso);
-  if (Number.isNaN(ms)) return "";
-  const s = Math.max(0, Math.floor((ms - Date.now()) / 1000));
-  if (s < 60) return "in <1m";
-  const m = Math.floor(s / 60);
-  if (m < 60) return `in ${m}m`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `in ${h}h ${m % 60}m`;
-  return `in ${Math.floor(h / 24)}d ${h % 24}h`;
+// "9:30 PM" / "21:30" — toLocaleTimeString with no explicit hour12 so the
+// system locale's hour cycle is honored. When the timestamp falls on a
+// different calendar day than now (weekly reset, session started before
+// midnight) a short weekday is prefixed: "Thu 9:30 PM". Shared by the
+// usage-bar reset text and the card-footer start time so the two can't
+// drift apart in format.
+function formatClockAt(epochMs) {
+  const d = new Date(epochMs);
+  const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const now = new Date();
+  const sameDay =
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate();
+  if (sameDay) return time;
+  return `${d.toLocaleDateString([], { weekday: "short" })} ${time}`;
 }
 
 // Relative "Xm ago" from an ISO timestamp (reuses the same coarse buckets as
