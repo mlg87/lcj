@@ -240,6 +240,16 @@ html, body {
   text-align: right;
 }
 
+/* Per-card session start time. Same muted 10px tier as the global footer's
+   "Xs ago", but left-aligned and without the border — it's card metadata,
+   not a section divider. */
+.card-footer {
+  margin-top: 8px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.card-footer.hidden { display: none; }
+
 /* Usage bars: one line each, label + % sit ON TOP of the fill. The fill is
    traffic-light colored by data-level; text gets a dark shadow so it reads
    over both the colored fill and the dark track. */

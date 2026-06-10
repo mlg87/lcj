@@ -127,6 +127,15 @@
         <div class="progress"><div class="bar"></div></div>
         <ul class="todos"></ul>
       </div>
+      <!--
+        Session start time, bottom-left of the card ("Started @ 8:22 PM").
+        Same muted tier as the global "Xs ago" freshness footer. Hidden when
+        the snapshot has no started_at (old meta.json or corrupt value) so an
+        empty footer doesn't leave a gap.
+      -->
+      <footer class="card-footer hidden">
+        <span class="started"></span>
+      </footer>
     </article>
   </template>
 

@@ -195,6 +195,20 @@ function renderCard(card, snap, focused) {
   // affordance that doesn't do anything visible.
   const clearBtn = card.querySelector(".todos-clear");
   clearBtn.classList.toggle("hidden", visible.length === 0);
+
+  // Session start time ("Started @ 8:22 PM", weekday-prefixed when the
+  // session started on a previous calendar day). started_at is epoch seconds
+  // from the SessionStart hook via state_reader; null hides the footer.
+  const footerEl = card.querySelector(".card-footer");
+  const startedAt = session.started_at;
+  if (Number.isFinite(startedAt)) {
+    footerEl.querySelector(".started").textContent =
+      `Started @ ${formatClockAt(startedAt * 1000)}`;
+    footerEl.classList.remove("hidden");
+  } else {
+    footerEl.querySelector(".started").textContent = "";
+    footerEl.classList.add("hidden");
+  }
 }
 
 // ---------------------------------------------------------------------------
