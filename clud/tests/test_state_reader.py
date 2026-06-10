@@ -81,6 +81,7 @@ def test_full_snapshot(reader: StateReader, tmp_path: Path) -> None:
         "model": "claude-opus-4-7",
         "project": "/p",
         "remote_control": None,
+        "started_at": 1000,
     }
     assert snap["current"]["tool_name"] == "Bash"
     assert snap["current"]["input_summary"] == "git status"
@@ -111,6 +112,61 @@ def test_missing_optional_files(reader: StateReader, tmp_path: Path) -> None:
     assert snap is not None
     assert snap["current"] is None
     assert snap["todos"] == []
+
+
+# Sentinel: pass {"started_at": _OMIT} to remove the key from meta.json
+# entirely (as opposed to writing an explicit null).
+_OMIT = object()
+
+
+# Separate from _seed_session_with_meta below: needs meta_overrides + _OMIT
+# support for the started_at edge cases, but doesn't need a session_dir handle.
+def _seed_session(tmp_path: Path, meta_overrides: dict) -> None:
+    """Minimal tty-map + meta.json so snapshot_for_tty('/dev/ttys003') resolves.
+
+    meta_overrides lets each started_at test vary just that field; passing
+    {"started_at": _OMIT} removes the key entirely.
+    """
+    _write(
+        tmp_path / "tty-map.json",
+        {"/dev/ttys003": {"session_id": "abc", "claude_pid": 1, "started_at": 1000}},
+    )
+    meta = {
+        "session_id": "abc",
+        "model": None,
+        "project": "/p",
+        "transcript_path": "",
+        "started_at": 1000,
+        "last_updated": 1000,
+        "ended_at": None,
+    }
+    meta.update(meta_overrides)
+    meta = {k: v for k, v in meta.items() if v is not _OMIT}
+    _write(tmp_path / "sessions/abc/meta.json", meta)
+
+
+def test_started_at_missing_is_none(reader: StateReader, tmp_path: Path) -> None:
+    _seed_session(tmp_path, {"started_at": _OMIT})
+    snap = reader.snapshot_for_tty("/dev/ttys003")
+    assert snap is not None
+    assert snap["session"]["started_at"] is None
+
+
+def test_started_at_non_numeric_is_none(reader: StateReader, tmp_path: Path) -> None:
+    # A hand-edited or corrupt meta.json must never raise or leak a non-epoch
+    # value to the webview. True is the nasty case: bool is an int subclass.
+    for bad in ("soon", True, None, [1000], -5):
+        _seed_session(tmp_path, {"started_at": bad})
+        snap = reader.snapshot_for_tty("/dev/ttys003")
+        assert snap is not None
+        assert snap["session"]["started_at"] is None, f"started_at={bad!r}"
+
+
+def test_started_at_float_coerced_to_int(reader: StateReader, tmp_path: Path) -> None:
+    _seed_session(tmp_path, {"started_at": 1000.7})
+    snap = reader.snapshot_for_tty("/dev/ttys003")
+    assert snap is not None
+    assert snap["session"]["started_at"] == 1000
 
 
 def test_corrupt_json_does_not_raise(reader: StateReader, tmp_path: Path) -> None:

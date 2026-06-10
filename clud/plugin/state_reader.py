@@ -27,6 +27,7 @@ Robustness contract:
 from __future__ import annotations
 
 import json
+import math
 import time
 from pathlib import Path
 from typing import Any
@@ -50,6 +51,18 @@ def _cap_str(value: object, limit: int) -> str | None:
     """Coerce to a length-capped str, or None. Defense-in-depth so a long
     blob from a status payload (or a hand-edited file) can't bloat the DOM."""
     return value[:limit] if isinstance(value, str) else None
+
+
+def _epoch_or_none(value: object) -> int | None:
+    """Coerce to an int epoch-seconds value, or None. bool is excluded
+    explicitly (it subclasses int), and non-finite floats and negatives are
+    rejected so a hand-edited meta.json can never leak NaN/inf or a pre-epoch
+    clock time to the webview. Matches _normalize_remote's >=0 convention."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if not math.isfinite(value):
+        return None
+    return int(value) if value >= 0 else None
 
 
 class StateReader:
@@ -126,6 +139,9 @@ class StateReader:
                 "model": meta.get("model"),
                 "project": meta.get("project", ""),
                 "remote_control": remote_control,
+                # Epoch seconds from the SessionStart hook; the webview's
+                # card footer renders it as "Started @ <clock time>".
+                "started_at": _epoch_or_none(meta.get("started_at")),
             },
             "current": current,
             "todos": todos,

@@ -240,6 +240,16 @@ html, body {
   text-align: right;
 }
 
+/* Per-card session start time. Same muted 10px tier as the global footer's
+   "Xs ago", but left-aligned and without the border — it's card metadata,
+   not a section divider. */
+.card-footer {
+  margin-top: 8px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.card-footer.hidden { display: none; }
+
 /* Usage bars: one line each, label + % sit ON TOP of the fill. The fill is
    traffic-light colored by data-level; text gets a dark shadow so it reads
    over both the colored fill and the dark track. */
@@ -260,20 +270,28 @@ html, body {
 }
 .bar .fill[data-level="warn"] { background: var(--bar-warn); }
 .bar .fill[data-level="crit"] { background: var(--bar-crit); }
-.bar .blabel, .bar .bpct {
+.bar .blabel, .bar .breset, .bar .bpct {
   position: absolute;
   top: 0;
   line-height: 18px;
   font-size: 11px;
   /* Palette --text rather than near-white: white-on-fill read as a harsh
      callout. A single soft shadow keeps it legible over both the muted fill
-     and the dark track without the heavy double-black halo. */
+     and the dark track without the heavy double-black halo.
+     Overlay text is a read-only indicator — don't let drag-selection grab it. */
   color: var(--text);
   text-shadow: 0 1px 1px rgba(0, 0, 0, 0.55);
   z-index: 1;
+  user-select: none;
+  pointer-events: none;
 }
 .bar .blabel { left: 6px; font-weight: bold; }
 .bar .bpct   { right: 6px; font-variant-numeric: tabular-nums; }
+/* Full-width + text-align keeps the reset text optically centered in the
+   bar regardless of how wide the label and percentage are. nowrap so a long
+   locale string clips at the bar edge instead of wrapping the time onto an
+   invisible clipped second line. */
+.bar .breset { left: 0; right: 0; text-align: center; white-space: nowrap; }
 
 /* When usage is unavailable, the two bars hide and this single muted line
    shows instead (JS toggles .hidden + data-usage on .strip). */

@@ -23,14 +23,16 @@
     -->
     <section class="strip" data-usage="unknown">
       <div class="usage">
-        <div class="bar" data-bucket="five_hour" title="">
+        <div class="bar" data-bucket="five_hour">
           <div class="fill" data-level="ok"></div>
           <span class="blabel">5h</span>
+          <span class="breset"></span>
           <span class="bpct">—</span>
         </div>
-        <div class="bar" data-bucket="seven_day" title="">
+        <div class="bar" data-bucket="seven_day">
           <div class="fill" data-level="ok"></div>
           <span class="blabel">wk</span>
+          <span class="breset"></span>
           <span class="bpct">—</span>
         </div>
         <div class="usage-unavailable hidden" title="">usage unavailable</div>
@@ -125,6 +127,15 @@
         <div class="progress"><div class="bar"></div></div>
         <ul class="todos"></ul>
       </div>
+      <!--
+        Session start time, bottom-left of the card ("Started @ 8:22 PM").
+        Same muted tier as the global "Xs ago" freshness footer. Hidden when
+        the snapshot has no started_at (old meta.json or corrupt value) so an
+        empty footer doesn't leave a gap.
+      -->
+      <footer class="card-footer hidden">
+        <span class="started"></span>
+      </footer>
     </article>
   </template>
 
