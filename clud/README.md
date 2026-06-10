@@ -2,7 +2,8 @@
 
 iTerm2 toolbelt panel that mirrors live Claude Code session state — todos, current tool, model, project — for whichever Claude tab is focused.
 
-<img width="499" height="389" alt="image" src="https://github.com/user-attachments/assets/bf14d7d4-3995-4242-a778-cccacfe93ab4" />
+<img width="340" height="337" alt="image" src="https://github.com/user-attachments/assets/8ae52c1f-e7f6-42fa-b416-843e5562501f" />
+
 
 
 ## Architecture
