@@ -175,36 +175,47 @@ func testParseOAuthBlob() {
 // MARK: - Tests: selectKeychainBlob
 
 func testSelectKeychainBlob() {
-    let items: [(account: String, blob: String)] = [
-        ("unknown", mcpOnlyBlob),
-        ("masongoetz", goodBlob),
+    let store: [String: String] = [
+        "unknown":    mcpOnlyBlob,
+        "masongoetz": goodBlob,
     ]
+    let accounts = ["unknown", "masongoetz"]
 
     // preferAccount matches the good item → returns goodBlob
-    let result1 = selectKeychainBlob(items, preferAccount: "masongoetz")
+    let result1 = selectKeychainBlob(accounts: accounts, preferAccount: "masongoetz", read: { store[$0] })
     expectEqual(result1, goodBlob, "selectKeychainBlob: preferred account should win")
 
     // preferAccount missing → falls through in order → finds masongoetz
-    let result2 = selectKeychainBlob(items, preferAccount: "other")
+    let result2 = selectKeychainBlob(accounts: accounts, preferAccount: "other", read: { store[$0] })
     expectEqual(result2, goodBlob, "selectKeychainBlob: scan fallback should find good blob")
 
     // Only mcpOnly items → nil
-    let bad: [(account: String, blob: String)] = [("a", mcpOnlyBlob)]
-    let result3 = selectKeychainBlob(bad, preferAccount: "a")
+    let result3 = selectKeychainBlob(accounts: ["a"], preferAccount: "a", read: { _ in mcpOnlyBlob })
     expect(result3 == nil, "selectKeychainBlob: no valid blobs → nil")
+
+    // Laziness: "masongoetz" preferred → "unknown" (mcpOnly) must NEVER be read.
+    // WHY: each per-item read may trigger a macOS ACL prompt; avoid spurious prompts.
+    nonisolated(unsafe) var readAccounts: [String] = []
+    let result4 = selectKeychainBlob(accounts: accounts, preferAccount: "masongoetz") { account in
+        readAccounts.append(account)
+        return store[account]
+    }
+    expectEqual(result4, goodBlob, "selectKeychainBlob: laziness — preferred wins")
+    expect(!readAccounts.contains("unknown"), "selectKeychainBlob: laziness — mcpOnly item must not be read")
 }
 
 // MARK: - Tests: resolveToken precedence
 
 func testResolveTokenPrecedence() {
     let nowMs: Int64 = 1_000_000_000_000   // 2001-09-09, well in the past
+    let keychainStore: [String: String] = ["masongoetz": goodBlob]
 
     // env beats file beats keychain
-    let keychainItems: [(account: String, blob: String)] = [("masongoetz", goodBlob)]
     let envResult = resolveToken(
         env: ["CLAUDE_CODE_OAUTH_TOKEN": "env-token"],
         credentialsFileText: goodBlob,
-        keychainItems: keychainItems,
+        keychainAccounts: ["masongoetz"],
+        keychainRead: { keychainStore[$0] },
         preferAccount: "masongoetz",
         nowMs: nowMs
     )
@@ -215,7 +226,8 @@ func testResolveTokenPrecedence() {
     let fileResult = resolveToken(
         env: [:],
         credentialsFileText: goodBlob,
-        keychainItems: [],
+        keychainAccounts: [],
+        keychainRead: { _ in nil },
         preferAccount: "masongoetz",
         nowMs: nowMs
     )
@@ -225,7 +237,8 @@ func testResolveTokenPrecedence() {
     let keychainResult = resolveToken(
         env: [:],
         credentialsFileText: nil,
-        keychainItems: keychainItems,
+        keychainAccounts: ["masongoetz"],
+        keychainRead: { keychainStore[$0] },
         preferAccount: "masongoetz",
         nowMs: nowMs
     )
@@ -237,7 +250,8 @@ func testResolveTokenPrecedence() {
     let expiredResult = resolveToken(
         env: [:],
         credentialsFileText: expiredBlob,
-        keychainItems: [],
+        keychainAccounts: [],
+        keychainRead: { _ in nil },
         preferAccount: "masongoetz",
         nowMs: nowMs
     )
