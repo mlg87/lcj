@@ -7,6 +7,7 @@ Monorepo for personal Claude Code skills, plugins, and related tooling.
 | Directory | What it is |
 |---|---|
 | [`clud/`](./clud/) | **Claude HUD** — an iTerm2 toolbelt panel that mirrors live Claude Code session state (todos, current tool, model, project) for whichever Claude tab is focused. |
+| [`clusage-menubar/`](./clusage-menubar/) | **Clusage** — a macOS menu bar app showing Claude 5h / Fable / weekly usage bars, powered by the local Claude Code OAuth token. |
 
 More to come.
 

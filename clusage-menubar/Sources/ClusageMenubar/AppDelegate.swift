@@ -1,0 +1,249 @@
+/// AppDelegate.swift — status item, menu wiring, and refresh cadence.
+///
+/// Plain AppKit; no SwiftUI. The status item hosts a custom StatusBarView subview
+/// so we get pixel-precise Stats-style layout. The NSMenu is rebuilt on every open
+/// (menuNeedsUpdate delegate) so the dropdown always shows fresh data.
+
+import AppKit
+import ClusageCore
+import ServiceManagement
+
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+
+    // MARK: - Ivars
+
+    private var statusItem: NSStatusItem!
+    private var statusView: StatusBarView!
+    private let fetcher = UsageFetcher()
+    private var latestState: FetchState?
+    private var refreshTimer: Timer?
+
+    // MARK: - applicationDidFinishLaunching
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        setupStatusItem()
+        setupFetcher()
+        setupRefreshTimer()
+        setupWakeObserver()
+
+        // Initial fetch — menu bar shows "–" until the first response arrives.
+        fetcher.fetchNow()
+    }
+
+    // MARK: - Status item setup
+
+    private func setupStatusItem() {
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+
+        guard let button = statusItem.button else { return }
+
+        // Custom view: draw inside the button's bounds. hitTest returns nil so
+        // clicks fall through to the button → opens the menu.
+        statusView = StatusBarView(frame: button.bounds)
+        statusView.autoresizingMask = [.width, .height]
+        button.addSubview(statusView)
+
+        // Menu opens on click (standard NSStatusItem behaviour).
+        let menu = NSMenu()
+        menu.delegate = self
+        statusItem.menu = menu
+    }
+
+    // MARK: - Fetcher wiring
+
+    private func setupFetcher() {
+        fetcher.onUpdate = { [weak self] state in
+            // Called on main thread by UsageFetcher.fetchNow().
+            guard let self else { return }
+            self.latestState = state
+            self.applyState(state)
+        }
+    }
+
+    private func applyState(_ state: FetchState) {
+        switch state {
+        case .ok(let snap, _):
+            statusView.snapshot = snap
+            statusView.resetDate = snap.session?.resetsAt
+            statusView.isDegraded = false
+        case .degraded:
+            statusView.snapshot = nil
+            statusView.isDegraded = true
+        }
+        statusView.needsDisplay = true
+        statusItem.length = statusView.preferredWidth()
+    }
+
+    // MARK: - Refresh cadence
+
+    private func setupRefreshTimer() {
+        // Fixed 5-min cadence (clud's default; no settings UI in v0.1.0).
+        // WHY Task { @MainActor in }: Timer callbacks are nonisolated from Swift 6's static
+        // perspective even though scheduledTimer runs on the main run loop. The Task hop is
+        // a no-op at runtime (already on main) but satisfies the type system without using
+        // DispatchQueue.main.async (which is unstructured and harder to reason about).
+        let timer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.fetcher.fetchNow() }
+        }
+        timer.tolerance = 30   // let the OS batch with other timers; saves battery
+        refreshTimer = timer
+    }
+
+    private func setupWakeObserver() {
+        // Re-fetch immediately after wake: usage data is likely stale post-sleep.
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(onWake),
+            name: NSWorkspace.didWakeNotification,
+            object: nil
+        )
+    }
+
+    @objc private func onWake() {
+        fetcher.fetchNow()
+    }
+
+    // MARK: - NSMenuDelegate
+
+    /// Rebuild the menu every time the user opens it so everything is fresh.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+
+        switch latestState {
+        case .ok(let snap, let updatedAt):
+            addUsageRows(to: menu, snap: snap)
+            addUpdatedRow(to: menu, updatedAt: updatedAt)
+        case .degraded(let reason, let updatedAt):
+            addDegradedRow(to: menu, reason: reason)
+            addUpdatedRow(to: menu, updatedAt: updatedAt)
+        case nil:
+            let waiting = NSMenuItem(title: "Waiting for first fetch…", action: nil, keyEquivalent: "")
+            waiting.isEnabled = false
+            menu.addItem(waiting)
+        }
+
+        menu.addItem(.separator())
+        addRefreshItem(to: menu)
+        addLaunchAtLoginItem(to: menu)
+        menu.addItem(.separator())
+        addQuitItem(to: menu)
+    }
+
+    // MARK: - Menu helpers
+
+    private func addUsageRows(to menu: NSMenu, snap: UsageSnapshot) {
+        func row(_ bucket: Bucket?, kind: String) -> NSMenuItem {
+            let label: String
+            let resetsStr: String
+            if let b = bucket {
+                let kindLabel: String
+                switch kind {
+                case "session": kindLabel = "Session (5h)"
+                case "weekly_scoped": kindLabel = b.label.capitalized + " (week)"
+                default: kindLabel = "Weekly (all models)"
+                }
+                resetsStr = menuDetailTime(b.resetsAt)
+                label = "\(kindLabel): \(b.percent)% — resets \(resetsStr)"
+            } else {
+                label = kind == "session" ? "Session (5h): –" :
+                        kind == "weekly_scoped" ? "Fable (week): –" :
+                        "Weekly (all models): –"
+            }
+            let item = NSMenuItem(title: label, action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            return item
+        }
+        menu.addItem(row(snap.session,      kind: "session"))
+        menu.addItem(row(snap.weeklyScoped, kind: "weekly_scoped"))
+        menu.addItem(row(snap.weeklyAll,    kind: "weekly_all"))
+    }
+
+    private func addDegradedRow(to menu: NSMenu, reason: String) {
+        let msg: String
+        switch reason {
+        case "no_token":
+            msg = "No Claude Code token found — run `claude` and sign in"
+        case "expired":
+            msg = "Token expired — run `claude` to refresh it"
+        case "http_401":
+            msg = "Token rejected — sign in again in `claude`"
+        case "network":
+            msg = "Network error"
+        case "http_5xx":
+            msg = "Anthropic API error"
+        default:  // "bad_shape"
+            msg = "Unexpected API response"
+        }
+        let item = NSMenuItem(title: "⚠︎ Usage unavailable: \(msg)", action: nil, keyEquivalent: "")
+        item.isEnabled = false
+        menu.addItem(item)
+    }
+
+    private func addUpdatedRow(to menu: NSMenu, updatedAt: Date) {
+        let elapsed = Date().timeIntervalSince(updatedAt)
+        let label: String
+        if elapsed < 60 {
+            label = "Updated just now"
+        } else {
+            let mins = Int(elapsed / 60)
+            label = "Updated \(mins)m ago"
+        }
+        let item = NSMenuItem(title: label, action: nil, keyEquivalent: "")
+        item.isEnabled = false
+        menu.addItem(item)
+    }
+
+    private func addRefreshItem(to menu: NSMenu) {
+        let item = NSMenuItem(title: "Refresh Now", action: #selector(refreshNow), keyEquivalent: "r")
+        item.keyEquivalentModifierMask = .command
+        item.target = self
+        menu.addItem(item)
+    }
+
+    @objc private func refreshNow() {
+        fetcher.fetchNow()
+    }
+
+    private func addLaunchAtLoginItem(to menu: NSMenu) {
+        // WHY: SMAppService.mainApp only works when the app is installed as a proper
+        // .app bundle (not via `swift run`). We wrap in try/catch and show an error
+        // item if the service call fails, which it will during development.
+        let service = SMAppService.mainApp
+        let isEnabled: Bool
+        do {
+            isEnabled = service.status == .enabled
+        }
+
+        let item = NSMenuItem(
+            title: "Launch at Login",
+            action: #selector(toggleLaunchAtLogin),
+            keyEquivalent: ""
+        )
+        item.state = isEnabled ? .on : .off
+        item.target = self
+        menu.addItem(item)
+    }
+
+    @objc private func toggleLaunchAtLogin() {
+        let service = SMAppService.mainApp
+        do {
+            if service.status == .enabled {
+                try service.unregister()
+            } else {
+                try service.register()
+            }
+        } catch {
+            // Show one-line error item on next menu open; state hasn't changed.
+            let errItem = NSMenuItem(title: "Login item error: \(error.localizedDescription)", action: nil, keyEquivalent: "")
+            errItem.isEnabled = false
+            statusItem.menu?.insertItem(errItem, at: 0)
+        }
+    }
+
+    private func addQuitItem(to menu: NSMenu) {
+        let item = NSMenuItem(title: "Quit Clusage", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        item.keyEquivalentModifierMask = .command
+        menu.addItem(item)
+    }
+}

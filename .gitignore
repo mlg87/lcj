@@ -1,4 +1,5 @@
 .superpowers/
+.playwright-mcp/
 .DS_Store
 *.swp
 __pycache__/
@@ -10,3 +11,11 @@ __pycache__/
 # but are NOT version-controlled — implementation code is the source of truth,
 # and code is expected to be self-documenting via comments and module docstrings.
 **/docs/superpowers/
+
+# clusage-menubar build artifacts
+clusage-menubar/.build/
+clusage-menubar/build/
+clusage-menubar/*.dmg
+clusage-menubar/dmg_temp/
+clusage-menubar/*.icns
+clusage-menubar/*.iconset/
