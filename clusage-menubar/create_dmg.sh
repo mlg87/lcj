@@ -6,6 +6,8 @@
 #   CODESIGN_IDENTITY  — sign the DMG (no effect if unset)
 #   NOTARY_PROFILE     — notarytool credential profile; DMG is notarized+stapled
 #                        only when BOTH CODESIGN_IDENTITY and NOTARY_PROFILE are set.
+#   SKIP_DMG_LAYOUT    — set to any value to skip the Finder AppleScript icon-layout
+#                        step (used on headless CI where no Finder session exists).
 
 set -euo pipefail
 
@@ -45,6 +47,9 @@ hdiutil create \
 MOUNT_POINT="$(hdiutil attach "${DMG_NAME%.dmg}_rw.dmg" -readwrite -noverify -noautoopen | grep '/Volumes/' | awk '{print $NF}')"
 
 # AppleScript layout: set icon size + window bounds (tolerate failure — cosmetic only)
+# WHY guard: on headless CI runners there is no Finder session; osascript hangs or
+# errors. Set SKIP_DMG_LAYOUT=1 to skip this cosmetic step entirely.
+if [[ -z "${SKIP_DMG_LAYOUT:-}" ]]; then
 osascript <<APPLESCRIPT || echo "  (AppleScript icon layout skipped)"
 tell application "Finder"
     tell disk "${APP_NAME}"
@@ -65,6 +70,9 @@ tell application "Finder"
     end tell
 end tell
 APPLESCRIPT
+else
+    echo "  (SKIP_DMG_LAYOUT set — skipping Finder icon layout)"
+fi
 
 # Sync and detach
 sync
