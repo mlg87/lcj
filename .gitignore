@@ -1,4 +1,5 @@
 .superpowers/
+.playwright-mcp/
 .DS_Store
 *.swp
 __pycache__/
