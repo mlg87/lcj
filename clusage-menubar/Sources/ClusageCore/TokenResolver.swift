@@ -8,10 +8,14 @@
 /// TokenResult carries only whether a live token was found, its source, and a machine
 /// reason — safe to log/diagnose.
 ///
-/// Port of clud/plugin/token_resolver.py with one critical addition: the multi-item
-/// Keychain selection fix (two items share "Claude Code-credentials" on this machine —
-/// one is mcpOAuth-only, the other has claudeAiOauth; we must enumerate all and pick
-/// the right one rather than grabbing the first via `security find-generic-password -w`).
+/// Port of clud/plugin/token_resolver.py with one critical addition: the two-phase
+/// Keychain read (see WHY comment on keychainBlob). The errSecParam(-50) failure from
+/// bulk secret export forced a split into:
+///   1. keychainAccounts — attrs-only enumeration (no secrets, no user prompt)
+///   2. keychainBlob    — per-item secret fetch (triggers one-time "Always Allow" ACL)
+/// selectKeychainBlob is lazy: it stops at the first item whose blob yields a token,
+/// so the mcpOAuth-only "unknown" item is never read (and never prompts) when the
+/// preferred "masongoetz" item resolves successfully.
 
 import Foundation
 import Security
@@ -73,28 +77,29 @@ public func parseOAuthBlob(_ text: String) -> (token: String?, expiresAtMs: Int6
     return (token, expiresAtMs)
 }
 
-/// Given a list of (account, blob) pairs from the Keychain, return the blob string
-/// whose `parseOAuthBlob` yields a non-nil token.
+/// Ordered lazy selection: preferAccount first, then remaining accounts in enumeration
+/// order; the first blob whose parseOAuthBlob yields a token wins.
 ///
-/// WHY multi-item selection: on the target machine TWO generic-password items share
-/// service "Claude Code-credentials" — account "unknown" (blob: mcpOAuth only) and
-/// account "masongoetz" (blob: claudeAiOauth with accessToken). The `security
-/// find-generic-password -w` approach (as used by clud) grabs whichever the OS picks
-/// first, which is the wrong one here. We enumerate all items and prefer the account
-/// matching the current username, then fall through by insertion order.
+/// WHY lazy (not eager): the mcpOAuth-only "unknown" item must never be read when the
+/// preferred "masongoetz" item is good — each per-item fetch may prompt the user via
+/// the macOS ACL dialog (bound to the app's code signature). Fetching needlessly would
+/// both waste a prompt and slow startup.
+///
+/// `read` is injected so this function stays pure and testable: in production it calls
+/// keychainBlob(account:); in tests it's a closure backed by a dict.
 public func selectKeychainBlob(
-    _ items: [(account: String, blob: String)],
-    preferAccount: String
+    accounts: [String],
+    preferAccount: String,
+    read: (String) -> String?
 ) -> String? {
-    // Try the preferred account first.
-    if let preferred = items.first(where: { $0.account == preferAccount }) {
-        let (tok, _) = parseOAuthBlob(preferred.blob)
-        if tok != nil { return preferred.blob }
+    var order = accounts
+    if let i = order.firstIndex(of: preferAccount) {
+        order.remove(at: i)
+        order.insert(preferAccount, at: 0)
     }
-    // Fall through remaining items in order.
-    for item in items where item.account != preferAccount {
-        let (tok, _) = parseOAuthBlob(item.blob)
-        if tok != nil { return item.blob }
+    for account in order {
+        guard let blob = read(account) else { continue }
+        if parseOAuthBlob(blob).token != nil { return blob }
     }
     return nil
 }
@@ -104,10 +109,16 @@ public func selectKeychainBlob(
 /// Priority: env → credentials file → keychain.
 /// Re-call this on every fetch so token rotations by Claude Code are picked up
 /// automatically (same discipline as clud's resolve_token).
+///
+/// keychainAccounts is the list of account names returned by the attrs-only query.
+/// keychainRead is a closure that fetches a single item's secret blob by account name.
+/// Separating enumeration from data fetch is required because kSecMatchLimitAll +
+/// kSecReturnData fails with errSecParam(-50) on macOS (verified live 2026-07-10).
 public func resolveToken(
     env: [String: String],
     credentialsFileText: String?,
-    keychainItems: [(account: String, blob: String)],
+    keychainAccounts: [String],
+    keychainRead: (String) -> String?,
     preferAccount: String,
     nowMs: Int64
 ) -> TokenResult {
@@ -130,9 +141,13 @@ public func resolveToken(
         }
     }
 
-    // 3. Keychain: enumerate all items, prefer current username.
+    // 3. Keychain: enumerate account names, prefer current username, lazy per-item fetch.
     if token == nil {
-        if let blob = selectKeychainBlob(keychainItems, preferAccount: preferAccount) {
+        if let blob = selectKeychainBlob(
+            accounts: keychainAccounts,
+            preferAccount: preferAccount,
+            read: keychainRead
+        ) {
             let (t, e) = parseOAuthBlob(blob)
             if t != nil {
                 token = t
@@ -153,20 +168,21 @@ public func resolveToken(
 
 // MARK: - Impure shell (used by the app)
 
-/// Read all generic-password items for the Claude Code credentials service via
-/// Security framework (NOT `security` CLI — GUI apps don't inherit shell PATH and
-/// SecItemCopyMatching avoids the extra process + parsing).
+/// Enumerate account names for the service via attrs-only query.
 ///
-/// First call may trigger a one-time macOS Keychain authorization prompt.
-/// Any failure (denial, missing item, OS error) returns an empty array → caller
-/// falls through to "no_token" degraded state.
-func readKeychainItems(service: String = keychainService) -> [(account: String, blob: String)] {
+/// WHY no kSecReturnData: kSecMatchLimitAll + kSecReturnData fails with errSecParam(-50)
+/// on macOS — bulk secret export is not supported for generic passwords (verified live
+/// 2026-07-10). Attributes-only enumeration returns status 0 with all items. Secrets
+/// are fetched per-item by keychainBlob(account:).
+///
+/// Never triggers the macOS "Always Allow" ACL prompt (no data requested).
+/// Returns [] on any error.
+func keychainAccounts(service: String = keychainService) -> [String] {
     let query: [CFString: Any] = [
         kSecClass:            kSecClassGenericPassword,
         kSecAttrService:      service,
         kSecMatchLimit:       kSecMatchLimitAll,
         kSecReturnAttributes: true,
-        kSecReturnData:       true,
     ]
 
     var result: CFTypeRef?
@@ -175,13 +191,33 @@ func readKeychainItems(service: String = keychainService) -> [(account: String, 
           let items = result as? [[CFString: Any]]
     else { return [] }
 
-    return items.compactMap { item -> (String, String)? in
-        guard let data = item[kSecValueData] as? Data,
-              let blob = String(data: data, encoding: .utf8)
-        else { return nil }
-        let account = (item[kSecAttrAccount] as? String) ?? "unknown"
-        return (account, blob)
+    return items.compactMap { item in
+        item[kSecAttrAccount] as? String
     }
+}
+
+/// Fetch ONE item's secret as a UTF-8 string, or nil.
+///
+/// WHY per-item: see keychainAccounts. A per-item query (kSecMatchLimitOne +
+/// kSecAttrAccount + kSecReturnData) succeeds where the bulk query fails.
+/// First call with a given code signature may trigger the one-time macOS ACL prompt;
+/// "Always Allow" persists until the binary is rebuilt (new ad-hoc signature).
+func keychainBlob(service: String = keychainService, account: String) -> String? {
+    let query: [CFString: Any] = [
+        kSecClass:        kSecClassGenericPassword,
+        kSecAttrService:  service,
+        kSecAttrAccount:  account,
+        kSecMatchLimit:   kSecMatchLimitOne,
+        kSecReturnData:   true,
+    ]
+
+    var result: CFTypeRef?
+    let status = SecItemCopyMatching(query as CFDictionary, &result)
+    guard status == errSecSuccess,
+          let data = result as? Data,
+          let blob = String(data: data, encoding: .utf8)
+    else { return nil }
+    return blob
 }
 
 /// Live token resolution using the real environment, credentials file, and Keychain.
@@ -191,12 +227,13 @@ func readKeychainItems(service: String = keychainService) -> [(account: String, 
 public func resolveTokenLive() -> TokenResult {
     let env = ProcessInfo.processInfo.environment
     let fileText = try? String(contentsOf: credentialsPath, encoding: .utf8)
-    let items = readKeychainItems()
+    let accounts = keychainAccounts()
     let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
     return resolveToken(
         env: env,
         credentialsFileText: fileText,
-        keychainItems: items,
+        keychainAccounts: accounts,
+        keychainRead: { keychainBlob(account: $0) },
         preferAccount: NSUserName(),
         nowMs: nowMs
     )
