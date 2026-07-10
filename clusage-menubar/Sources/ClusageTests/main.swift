@@ -30,8 +30,10 @@ func expectEqual<T: Equatable>(_ a: T, _ b: T, _ msg: String, file: String = #fi
 
 // MARK: - Fixtures
 
-/// Full live API response captured 2026-07-10. This is the ground-truth fixture;
-/// it pins the real response shape so parse changes break visibly.
+/// Full live API response captured 2026-07-10 from the claude.ai org-usage endpoint
+/// (GET /api/organizations/{orgId}/usage). Response shape matches the previous internal
+/// endpoint — UsageSnapshot.parse works unchanged (verified against ClaudeUsageBar's
+/// parser, 2026-07-10). This fixture pins the real shape so parse changes break visibly.
 let fullLiveFixture = """
 {
   "five_hour": {"utilization": 9.0, "resets_at": "2026-07-11T02:00:00.156578+00:00"},
@@ -53,16 +55,6 @@ let fallbackFixture = """
 }
 """
 
-/// mcpOAuth-only blob — mirrors the real "unknown" account item found in keychain
-/// (account owns only an mcp token, not the Claude AI oauth token we need).
-let mcpOnlyBlob = """
-{"mcpOAuth":{"clientId":"test-client","scopes":["mcp"]}}
-"""
-
-/// Good claudeAiOauth blob — mirrors the real "masongoetz" account item.
-let goodBlob = """
-{"claudeAiOauth":{"accessToken":"sk-ant-test-token","refreshToken":"rt-test","expiresAt":9999999999000,"scopes":["user:inference"],"subscriptionType":"claude_pro","rateLimitTier":"standard"}}
-"""
 
 // MARK: - Tests: UsageSnapshot.parse
 
@@ -148,115 +140,39 @@ func testPercentClamping() {
     expectEqual(fracSnap?.session?.percent, 10, "Clamping: 9.6 should round to 10")
 }
 
-// MARK: - Tests: parseOAuthBlob
+// MARK: - Tests: CookieAuth
 
-func testParseOAuthBlob() {
-    // Valid blob
-    let (tok, exp) = parseOAuthBlob(goodBlob)
-    expectEqual(tok, "sk-ant-test-token", "parseOAuthBlob: token")
-    expect(exp != nil, "parseOAuthBlob: expiresAtMs non-nil")
+func testSanitizeCookie() {
+    // Passthrough — no label, no whitespace
+    expectEqual(sanitizeCookie("a=1; b=2"), "a=1; b=2", "sanitizeCookie: passthrough")
 
-    // mcpOAuth-only blob → (nil, nil)
-    let (tok2, exp2) = parseOAuthBlob(mcpOnlyBlob)
-    expect(tok2 == nil, "parseOAuthBlob: mcpOnly blob should yield nil token")
-    expect(exp2 == nil, "parseOAuthBlob: mcpOnly blob should yield nil expiry")
+    // Trim leading/trailing whitespace and newlines
+    expectEqual(sanitizeCookie("  a=1\n"), "a=1", "sanitizeCookie: trims whitespace")
 
-    // expiresAt in seconds (e.g. 2_000_000_000) → coerced ×1000
-    let secondsBlob = #"{"claudeAiOauth":{"accessToken":"tok","expiresAt":2000000000}}"#
-    let (_, expMs) = parseOAuthBlob(secondsBlob)
-    expectEqual(expMs, 2_000_000_000_000, "parseOAuthBlob: seconds-valued expiresAt should be coerced ×1000")
-
-    // Small sentinel (e.g. 5) → NOT coerced (below secondsFloor)
-    let smallBlob = #"{"claudeAiOauth":{"accessToken":"tok","expiresAt":5}}"#
-    let (_, expSmall) = parseOAuthBlob(smallBlob)
-    expectEqual(expSmall, 5, "parseOAuthBlob: tiny sentinel should not be coerced")
+    // Strip "Cookie:" header label (with space) — case-insensitive
+    expectEqual(sanitizeCookie("Cookie: a=1"), "a=1", "sanitizeCookie: strips 'Cookie: ' label")
+    expectEqual(sanitizeCookie("cookie:a=1"), "a=1", "sanitizeCookie: strips 'cookie:' label case-insensitively")
 }
 
-// MARK: - Tests: selectKeychainBlob
-
-func testSelectKeychainBlob() {
-    let store: [String: String] = [
-        "unknown":    mcpOnlyBlob,
-        "masongoetz": goodBlob,
-    ]
-    let accounts = ["unknown", "masongoetz"]
-
-    // preferAccount matches the good item → returns goodBlob
-    let result1 = selectKeychainBlob(accounts: accounts, preferAccount: "masongoetz", read: { store[$0] })
-    expectEqual(result1, goodBlob, "selectKeychainBlob: preferred account should win")
-
-    // preferAccount missing → falls through in order → finds masongoetz
-    let result2 = selectKeychainBlob(accounts: accounts, preferAccount: "other", read: { store[$0] })
-    expectEqual(result2, goodBlob, "selectKeychainBlob: scan fallback should find good blob")
-
-    // Only mcpOnly items → nil
-    let result3 = selectKeychainBlob(accounts: ["a"], preferAccount: "a", read: { _ in mcpOnlyBlob })
-    expect(result3 == nil, "selectKeychainBlob: no valid blobs → nil")
-
-    // Laziness: "masongoetz" preferred → "unknown" (mcpOnly) must NEVER be read.
-    // WHY: each per-item read may trigger a macOS ACL prompt; avoid spurious prompts.
-    nonisolated(unsafe) var readAccounts: [String] = []
-    let result4 = selectKeychainBlob(accounts: accounts, preferAccount: "masongoetz") { account in
-        readAccounts.append(account)
-        return store[account]
-    }
-    expectEqual(result4, goodBlob, "selectKeychainBlob: laziness — preferred wins")
-    expect(!readAccounts.contains("unknown"), "selectKeychainBlob: laziness — mcpOnly item must not be read")
-}
-
-// MARK: - Tests: resolveToken precedence
-
-func testResolveTokenPrecedence() {
-    let nowMs: Int64 = 1_000_000_000_000   // 2001-09-09, well in the past
-    let keychainStore: [String: String] = ["masongoetz": goodBlob]
-
-    // env beats file beats keychain
-    let envResult = resolveToken(
-        env: ["CLAUDE_CODE_OAUTH_TOKEN": "env-token"],
-        credentialsFileText: goodBlob,
-        keychainAccounts: ["masongoetz"],
-        keychainRead: { keychainStore[$0] },
-        preferAccount: "masongoetz",
-        nowMs: nowMs
+func testOrgIdFromCookie() {
+    // Mid-string with spaces after semicolons
+    expectEqual(
+        orgId(fromCookie: "anthropic-device-id=x; lastActiveOrg=1234-abcd; sessionKey=sk-ant"),
+        "1234-abcd",
+        "orgId: mid-string extraction"
     )
-    expectEqual(envResult.source, "env", "resolveToken: env should take priority")
-    expectEqual(envResult.token, "env-token", "resolveToken: env token value")
 
-    // file beats keychain (no env)
-    let fileResult = resolveToken(
-        env: [:],
-        credentialsFileText: goodBlob,
-        keychainAccounts: [],
-        keychainRead: { _ in nil },
-        preferAccount: "masongoetz",
-        nowMs: nowMs
+    // Absent key → nil
+    expect(
+        orgId(fromCookie: "sessionKey=sk-ant") == nil,
+        "orgId: absent key should return nil"
     )
-    expectEqual(fileResult.source, "file", "resolveToken: file beats keychain")
 
-    // keychain fallback
-    let keychainResult = resolveToken(
-        env: [:],
-        credentialsFileText: nil,
-        keychainAccounts: ["masongoetz"],
-        keychainRead: { keychainStore[$0] },
-        preferAccount: "masongoetz",
-        nowMs: nowMs
+    // Empty value → nil
+    expect(
+        orgId(fromCookie: "lastActiveOrg=; sessionKey=x") == nil,
+        "orgId: empty value should return nil"
     )
-    expectEqual(keychainResult.source, "keychain", "resolveToken: keychain fallback")
-
-    // expired token → reason "expired", token nil
-    let expiredBlob = #"{"claudeAiOauth":{"accessToken":"tok","expiresAt":1000}}"#
-    // 1000ms expiresAt << nowMs = 1e12ms → expired
-    let expiredResult = resolveToken(
-        env: [:],
-        credentialsFileText: expiredBlob,
-        keychainAccounts: [],
-        keychainRead: { _ in nil },
-        preferAccount: "masongoetz",
-        nowMs: nowMs
-    )
-    expectEqual(expiredResult.reason, "expired", "resolveToken: expired reason")
-    expect(expiredResult.token == nil, "resolveToken: expired token should be nil")
 }
 
 // MARK: - Tests: menuBarTime
@@ -300,9 +216,8 @@ testParseResetDate()
 testFallbackFixture()
 testBadShapeFixtures()
 testPercentClamping()
-testParseOAuthBlob()
-testSelectKeychainBlob()
-testResolveTokenPrecedence()
+testSanitizeCookie()
+testOrgIdFromCookie()
 testMenuBarTime()
 testBand()
 

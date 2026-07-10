@@ -29,6 +29,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // Initial fetch — menu bar shows "–" until the first response arrives.
         fetcher.fetchNow()
+        // First run: no cookie stored → open the paste dialog once, after launch settles.
+        // WHY DispatchQueue.main.async: gives AppKit time to finish setting up the status
+        // item before we show an alert; calling runModal() during launch can hang the app.
+        if CookieStore.load() == nil {
+            DispatchQueue.main.async { self.promptForCookie() }
+        }
     }
 
     // MARK: - Status item setup
@@ -125,6 +131,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.addItem(.separator())
         addRefreshItem(to: menu)
+        addSetCookieItem(to: menu)
         addLaunchAtLoginItem(to: menu)
         menu.addItem(.separator())
         addQuitItem(to: menu)
@@ -162,12 +169,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func addDegradedRow(to menu: NSMenu, reason: String) {
         let msg: String
         switch reason {
-        case "no_token":
-            msg = "No Claude Code token found — run `claude` and sign in"
-        case "expired":
-            msg = "Token expired — run `claude` to refresh it"
+        case "no_cookie":
+            msg = "No session cookie — choose 'Set Session Cookie…' below"
+        case "no_org_id":
+            msg = "Org ID not found — re-copy the FULL cookie from claude.ai"
         case "http_401":
-            msg = "Token rejected — sign in again in `claude`"
+            msg = "Cookie rejected or expired — paste a fresh one from claude.ai"
         case "network":
             msg = "Network error"
         case "http_5xx":
@@ -203,6 +210,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func refreshNow() {
         fetcher.fetchNow()
+    }
+
+    private func addSetCookieItem(to menu: NSMenu) {
+        let item = NSMenuItem(title: "Set Session Cookie…", action: #selector(promptForCookie as () -> Void), keyEquivalent: "")
+        item.target = self
+        menu.addItem(item)
+    }
+
+    @objc func promptForCookie() { promptForCookie(prefill: "") }
+
+    private func promptForCookie(prefill: String) {
+        // LSUIElement app: the app has no Dock icon, so NSAlert won't front without this.
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "Set Claude session cookie"
+        alert.informativeText = """
+            1. Open claude.ai/settings/usage in your browser
+            2. Open DevTools (⌘⌥I) → Network tab
+            3. Refresh the page, click the "usage" request
+            4. In Request Headers, copy the full "Cookie" value
+            5. Paste it below
+            """
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 420, height: 24))
+        field.placeholderString = "anthropic-device-id=…; lastActiveOrg=…; sessionKey=…"
+        field.stringValue = prefill
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Save")                           // .alertFirstButtonReturn
+        alert.addButton(withTitle: "Open claude.ai/settings/usage") // .alertSecondButtonReturn
+        alert.addButton(withTitle: "Cancel")                        // .alertThirdButtonReturn
+        alert.window.initialFirstResponder = field
+
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            let cookie = sanitizeCookie(field.stringValue)
+            guard !cookie.isEmpty else { return }  // empty Save == Cancel; never clears
+            CookieStore.save(cookie)
+            fetcher.fetchNow()
+        case .alertSecondButtonReturn:
+            NSWorkspace.shared.open(URL(string: "https://claude.ai/settings/usage")!)
+            promptForCookie(prefill: field.stringValue)  // reopen; keep typed text
+        default:
+            break
+        }
     }
 
     private func addLaunchAtLoginItem(to menu: NSMenu) {

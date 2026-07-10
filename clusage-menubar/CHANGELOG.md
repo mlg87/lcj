@@ -12,7 +12,7 @@ Initial release.
 ### Added
 - Stats-style macOS menu bar display: three compact segments (5H / Fable / weekly-all) each with a mini progress bar, percentage, and thin vertical separators.
 - 5-hour session reset time shown at the right of the menu bar label.
-- Auth via local Claude Code OAuth token — no cookie pasting. Resolves from `CLAUDE_CODE_OAUTH_TOKEN` env → `~/.claude/.credentials.json` → macOS Keychain service `Claude Code-credentials`. Multi-item Keychain selection picks the `claudeAiOauth` item correctly even when an `mcpOAuth`-only item shares the same service name.
+- Auth via pasted claude.ai session cookie (ClaudeUsageBar-style): paste once from DevTools, stored in app preferences (`com.mlg87.clusage-menubar`, key `session_cookie`), `CLUSAGE_COOKIE` env override. No keychain access, no prompts.
 - Dynamic color bands: green (<70%), yellow (70–89%), red (≥90%).
 - Dropdown menu: per-bucket detail rows with reset weekday + time, "Updated N min ago" timestamp, Refresh Now (⌘R), Launch at Login toggle, Quit (⌘Q).
 - Degraded state: when the token is missing/expired or the API is unreachable, all bars show "–" and the dropdown explains why.

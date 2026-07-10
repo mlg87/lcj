@@ -1,12 +1,11 @@
-/// UsageFetcher.swift — URLSession-based fetcher for the Anthropic OAuth usage endpoint.
+/// UsageFetcher.swift — URLSession-based fetcher for the claude.ai org-usage endpoint.
 ///
-/// Ports the fetch discipline from clud/plugin/usage_fetcher.py:
-/// - Same headers (Authorization, anthropic-beta, User-Agent)
-/// - Same UA detection logic (explicit binary paths; GUI apps don't inherit shell PATH)
-/// - Same failure-reason vocabulary: no_token / expired / network / http_401 / http_5xx / bad_shape
-/// - Re-resolves the token on every fetch so Claude Code token rotations are transparent.
+/// Auth: pasted session cookie stored via CookieStore (UserDefaults). Ported from
+/// Artzainnn/ClaudeUsageBar (249★, shipping). Headers copied verbatim — claude.ai
+/// fronts with bot protection; a browser UA + Origin/Referer passes it.
+///
+/// Failure vocabulary: no_cookie / no_org_id / network / http_401 / http_5xx / bad_shape
 
-import AppKit
 import ClusageCore
 import Foundation
 
@@ -18,72 +17,26 @@ enum FetchState {
     case degraded(reason: String, updatedAt: Date)
 }
 
-// MARK: - UA detection
-
-/// Claude binary search paths in probe order.
-/// WHY explicit paths: GUI apps launched from the Dock / Finder don't inherit
-/// the user's shell PATH, so `claude` on PATH is invisible here.
-private let claudeBinaryPaths = [
-    FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin/claude").path,
-    FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/local/claude").path,
-    "/opt/homebrew/bin/claude",
-    "/usr/local/bin/claude",
-]
-
-private let fallbackUserAgent = "claude-code/2.1.198"   // verified live 2026-07-10
-
-/// Detect the claude-code/<version> User-Agent string required by the endpoint.
-///
-/// WHY required: without `claude-code/<version>` the request is routed to a
-/// throttled bucket that returns persistent 429s (see clud's usage_fetcher.py docstring).
-/// We probe explicit paths rather than relying on $PATH because GUI apps don't
-/// inherit the shell environment. Falls back to a known-good constant.
-func detectUserAgent() -> String {
-    for path in claudeBinaryPaths {
-        guard FileManager.default.isExecutableFile(atPath: path) else { continue }
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: path)
-        proc.arguments = ["--version"]
-        let pipe = Pipe()
-        proc.standardOutput = pipe
-        proc.standardError = Pipe()   // suppress stderr
-        do {
-            try proc.run()
-            // 5-second timeout so a hung binary doesn't stall launch.
-            let deadline = Date(timeIntervalSinceNow: 5)
-            while proc.isRunning && Date() < deadline {
-                Thread.sleep(forTimeInterval: 0.05)
-            }
-            if proc.isRunning { proc.terminate() }
-        } catch {
-            continue
-        }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        if let output = String(data: data, encoding: .utf8),
-           let first = output.split(separator: " ").first,
-           !first.isEmpty {
-            return "claude-code/\(first)"
-        }
-    }
-    return fallbackUserAgent
-}
-
 // MARK: - Fetcher
 
-final class UsageFetcher: @unchecked Sendable {
-    static let url = URL(string: "https://api.anthropic.com/api/oauth/usage")!
-    static let betaHeader = "oauth-2025-04-20"
+private let browserUserAgent =
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
-    private let userAgent: String
+final class UsageFetcher: @unchecked Sendable {
     private let session: URLSession
     /// Called on the main thread with each new FetchState.
     var onUpdate: ((FetchState) -> Void)?
 
     init() {
-        userAgent = detectUserAgent()
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 15
         config.timeoutIntervalForResource = 15
+        // WHY disable cookie storage: we send the pasted Cookie header verbatim.
+        // Default URLSession cookie storage would capture Set-Cookie responses and
+        // merge/override our header on later requests, making behavior drift from
+        // the pasted value. Disable both directions.
+        config.httpShouldSetCookies = false
+        config.httpCookieAcceptPolicy = .never
         session = URLSession(configuration: config)
     }
 
@@ -95,33 +48,53 @@ final class UsageFetcher: @unchecked Sendable {
     /// control resumes on the main actor so onUpdate is safe to invoke directly.
     @MainActor
     func fetchNow() {
-        let ua = userAgent
         let s = session
         Task {
-            let state = await Self.fetch(session: s, userAgent: ua)
+            let state = await Self.fetch(session: s)
             // Back on the main actor after await — onUpdate access is safe.
             self.onUpdate?(state)
         }
     }
 
-    private static func fetch(session: URLSession, userAgent: String) async -> FetchState {
+    /// Build a request with the browser headers claude.ai requires.
+    ///
+    /// WHY these headers: claude.ai uses bot protection; a Chrome browser UA plus
+    /// Origin/Referer/authority are required to get a 200 (verified by ClaudeUsageBar).
+    /// Copied verbatim from the reference implementation.
+    private static func claudeRequest(url: URL, cookie: String) -> URLRequest {
+        var r = URLRequest(url: url)
+        r.setValue(cookie, forHTTPHeaderField: "Cookie")
+        r.setValue("*/*", forHTTPHeaderField: "Accept")
+        r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        r.setValue("https://claude.ai", forHTTPHeaderField: "Origin")
+        r.setValue("https://claude.ai", forHTTPHeaderField: "Referer")
+        r.setValue(browserUserAgent, forHTTPHeaderField: "User-Agent")
+        r.setValue("claude.ai", forHTTPHeaderField: "authority")
+        return r
+    }
+
+    private static func fetch(session: URLSession) async -> FetchState {
         let now = Date()
 
-        // Re-resolve token on every fetch — picks up Claude Code token rotations.
-        let tr = resolveTokenLive()
-        guard let token = tr.token else {
-            return .degraded(reason: tr.reason ?? "no_token", updatedAt: now)
+        guard let cookie = CookieStore.load() else {
+            return .degraded(reason: "no_cookie", updatedAt: now)
         }
 
-        var request = URLRequest(url: url)
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.setValue(betaHeader, forHTTPHeaderField: "anthropic-beta")
-        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        // Try to extract orgId from the cookie (free operation for devtools copies that
+        // include lastActiveOrg=). Fall back to /api/bootstrap for cookies that omit it.
+        var org = orgId(fromCookie: cookie)
+        if org == nil {
+            org = await Self.bootstrapOrgId(session: session, cookie: cookie)
+        }
+        guard let orgId = org else {
+            return .degraded(reason: "no_org_id", updatedAt: now)
+        }
 
+        let usageURL = URL(string: "https://claude.ai/api/organizations/\(orgId)/usage")!
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await session.data(for: request)
+            (data, response) = try await session.data(for: claudeRequest(url: usageURL, cookie: cookie))
         } catch {
             return .degraded(reason: "network", updatedAt: now)
         }
@@ -144,5 +117,20 @@ final class UsageFetcher: @unchecked Sendable {
         }
 
         return .ok(snapshot, updatedAt: now)
+    }
+
+    /// GET /api/bootstrap → account.lastActiveOrgId. Returns nil on any failure.
+    ///
+    /// WHY this fallback: some cookie strings (e.g. partial pastes missing lastActiveOrg)
+    /// don't carry the org UUID directly. ClaudeUsageBar uses this same fallback.
+    private static func bootstrapOrgId(session: URLSession, cookie: String) async -> String? {
+        let url = URL(string: "https://claude.ai/api/bootstrap")!
+        guard let (data, resp) = try? await session.data(for: claudeRequest(url: url, cookie: cookie)),
+              (resp as? HTTPURLResponse)?.statusCode == 200,
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let account = json["account"] as? [String: Any],
+              let id = account["lastActiveOrgId"] as? String, !id.isEmpty
+        else { return nil }
+        return id
     }
 }
