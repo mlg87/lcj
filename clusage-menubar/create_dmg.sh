@@ -3,13 +3,6 @@
 #
 # Produces: ClusageMenubar-<VERSION>.dmg
 # Optional env vars:
-#   CODESIGN_IDENTITY  — sign the DMG (no effect if unset)
-#   NOTARY_PROFILE     — local dev: `xcrun notarytool store-credentials` profile;
-#                        DMG is notarized+stapled only when CODESIGN_IDENTITY is also set.
-#   NOTARY_KEY_FILE    — CI: path to App Store Connect API key (.p8 file)
-#   NOTARY_KEY_ID      — CI: App Store Connect API key ID
-#   NOTARY_ISSUER_ID   — CI: App Store Connect Issuer ID
-#                        (all three NOTARY_KEY_* are required for the API-key path)
 #   SKIP_DMG_LAYOUT    — set to any value to skip the Finder AppleScript icon-layout
 #                        step (used on headless CI where no Finder session exists).
 
@@ -92,39 +85,7 @@ hdiutil convert "${DMG_NAME%.dmg}_rw.dmg" \
 rm -f "${DMG_NAME%.dmg}_rw.dmg"
 rm -rf "$TEMP_DIR"
 
-# -- Notarization (optional) --
-# Two credential modes for notarytool:
-#   NOTARY_PROFILE                       — local dev: `xcrun notarytool store-credentials` profile
-#   NOTARY_KEY_FILE + NOTARY_KEY_ID +
-#   NOTARY_ISSUER_ID                     — CI: App Store Connect API key (no keychain profile needed)
-NOTARY_ARGS=()
-if [[ -n "${NOTARY_PROFILE:-}" ]]; then
-    NOTARY_ARGS=(--keychain-profile "$NOTARY_PROFILE")
-elif [[ -n "${NOTARY_KEY_FILE:-}" && -n "${NOTARY_KEY_ID:-}" && -n "${NOTARY_ISSUER_ID:-}" ]]; then
-    NOTARY_ARGS=(--key "$NOTARY_KEY_FILE" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID")
-fi
-
-if [[ -n "${CODESIGN_IDENTITY:-}" && ${#NOTARY_ARGS[@]} -gt 0 ]]; then
-    echo "--> Signing DMG …"
-    codesign --sign "$CODESIGN_IDENTITY" --timestamp "$DMG_NAME"
-
-    echo "--> Submitting for notarization (this may take a few minutes) …"
-    xcrun notarytool submit "$DMG_NAME" "${NOTARY_ARGS[@]}" --wait
-
-    # WHY staple is the hard gate: some notarytool versions exit 0 even when the
-    # submission status is Invalid; stapler fails (exit 65) unless the ticket exists.
-    echo "--> Stapling notarization ticket …"
-    xcrun stapler staple "$DMG_NAME"
-    xcrun stapler validate "$DMG_NAME"
-
-    # Gatekeeper's own verdict — must print "source=Notarized Developer ID".
-    spctl -a -t open --context context:primary-signature -v "$DMG_NAME"
-
-    echo "==> DMG notarized and stapled: $DMG_NAME"
-else
-    echo ""
-    echo "==> Created: $DMG_NAME (unsigned / un-notarized)"
-    echo "    NOTE: Gatekeeper will block this DMG on other machines."
-    echo "    To notarize: set CODESIGN_IDENTITY plus either NOTARY_PROFILE or"
-    echo "    NOTARY_KEY_FILE + NOTARY_KEY_ID + NOTARY_ISSUER_ID."
-fi
+echo ""
+echo "==> Created: ${DMG_NAME} (ad-hoc signed, not notarized)"
+echo "    Browser-downloaded DMGs hit Gatekeeper (quarantine xattr)."
+echo "    Prefer install.sh — curl/tar downloads carry no quarantine."
