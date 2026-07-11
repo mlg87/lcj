@@ -5,6 +5,18 @@ All notable changes to clusage-menubar.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0](https://github.com/mlg87/lcj/compare/clusage-menubar-v0.1.2...clusage-menubar-v0.2.0) (2026-07-11)
+
+
+### Features
+
+* **clusage-menubar:** notarized releases + release-please automation ([54182fd](https://github.com/mlg87/lcj/commit/54182fd74ee72892798a15e8e69e99b821dff677))
+
+
+### Bug Fixes
+
+* **clusage-menubar:** sign and notarize release DMGs so downloads pass Gatekeeper ([be4af80](https://github.com/mlg87/lcj/commit/be4af807978116a47057b7644c965a8c2cb049ef))
+
 ## v0.1.2
 
 ### Changed
