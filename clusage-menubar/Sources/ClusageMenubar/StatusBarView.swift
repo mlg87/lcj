@@ -87,7 +87,7 @@ final class StatusBarView: NSView {
     // MARK: - Grid metrics
 
     private struct GridMetrics {
-        let leftLabelW: CGFloat    // max("5H"-entry label, "RESETS") at labelFont
+        let leftLabelW: CGFloat   // "5H"-entry label only — RESETS row is independent
         let rightLabelW: CGFloat   // max(week label, fable label) at labelFont
         let pctW: CGFloat          // max percentText over all 3 entries at percentFont
         let leftColW: CGFloat
@@ -104,16 +104,17 @@ final class StatusBarView: NSView {
             ceil((s as NSString).size(withAttributes: [.font: Self.percentFont]).width)
         }
 
-        let leftLabelW  = max(measuredLabelW(e.session.label), measuredLabelW(Self.resetLabel))
-        let rightLabelW = max(measuredLabelW(e.week.label),    measuredLabelW(e.fable.label))
+        let leftLabelW  = measuredLabelW(e.session.label)   // "5H" only; RESETS doesn't inflate the bar column
+        let rightLabelW = max(measuredLabelW(e.week.label), measuredLabelW(e.fable.label))
         let allPctW     = max(measuredPctW(e.session.percentText),
                           max(measuredPctW(e.fable.percentText), measuredPctW(e.week.percentText)))
 
         func gaugeRowW(_ lw: CGFloat) -> CGFloat {
             lw + Self.labelBarGap + Self.barW + Self.barTextGap + allPctW
         }
-        let timeStrW = ceil((timeText() as NSString).size(withAttributes: [.font: Self.timeFont]).width)
-        let timeRowW = leftLabelW + Self.labelBarGap + timeStrW
+        let resetLabelW = measuredLabelW(Self.resetLabel)
+        let timeStrW    = ceil((timeText() as NSString).size(withAttributes: [.font: Self.timeFont]).width)
+        let timeRowW    = resetLabelW + 2 + timeStrW   // compact: "RESETS" + 2pt gap + time, no column alignment
 
         let leftColW  = max(gaugeRowW(leftLabelW), timeRowW)
         let rightColW = gaugeRowW(rightLabelW)
@@ -136,7 +137,7 @@ final class StatusBarView: NSView {
         let x0: CGFloat = 2
 
         drawRow(entry: e.session, x: x0, centerY: midY + Self.rowOffset, labelW: m.leftLabelW,  pctW: m.pctW)
-        drawTimeRow(x: x0, centerY: midY - Self.rowOffset, labelW: m.leftLabelW, pctW: m.pctW)
+        drawTimeRow(x: x0, centerY: midY - Self.rowOffset)
 
         let rx = drawSeparator(x: x0 + m.leftColW, midY: midY)
 
@@ -182,28 +183,23 @@ final class StatusBarView: NSView {
                   withAttributes: pAttrs)
     }
 
-    /// Draw the RESETS label and reset-time string in the bottom-left cell.
-    private func drawTimeRow(x: CGFloat, centerY: CGFloat, labelW: CGFloat, pctW: CGFloat) {
-        // "RESETS" — right-aligned in labelW, secondary label color (same style as gauge labels)
+    /// Draw the RESETS label and reset-time string as a compact pair in the bottom-left cell.
+    private func drawTimeRow(x: CGFloat, centerY: CGFloat) {
         let labelAttrs: [NSAttributedString.Key: Any] = [
             .font: Self.labelFont,
             .foregroundColor: NSColor.secondaryLabelColor,
         ]
         let rStr  = Self.resetLabel as NSString
         let rSize = rStr.size(withAttributes: labelAttrs)
-        rStr.draw(at: NSPoint(x: x + labelW - rSize.width,
-                              y: centerY - rSize.height / 2),
-                  withAttributes: labelAttrs)
+        rStr.draw(at: NSPoint(x: x, y: centerY - rSize.height / 2), withAttributes: labelAttrs)
 
-        // Reset time — right-aligned to the same right edge as percent values above it
         let timeAttrs: [NSAttributedString.Key: Any] = [
             .font: Self.timeFont,
             .foregroundColor: NSColor.labelColor,
         ]
         let tStr  = timeText() as NSString
         let tSize = tStr.size(withAttributes: timeAttrs)
-        let pctRightEdge = x + labelW + Self.labelBarGap + Self.barW + Self.barTextGap + pctW
-        tStr.draw(at: NSPoint(x: pctRightEdge - tSize.width,
+        tStr.draw(at: NSPoint(x: x + rSize.width + 2,
                               y: centerY - tSize.height / 2),
                   withAttributes: timeAttrs)
     }
