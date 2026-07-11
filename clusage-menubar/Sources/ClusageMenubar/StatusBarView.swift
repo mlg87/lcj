@@ -136,7 +136,7 @@ final class StatusBarView: NSView {
         let x0: CGFloat = 2
 
         drawRow(entry: e.session, x: x0, centerY: midY + Self.rowOffset, labelW: m.leftLabelW,  pctW: m.pctW)
-        drawTimeRow(x: x0, centerY: midY - Self.rowOffset, labelW: m.leftLabelW)
+        drawTimeRow(x: x0, centerY: midY - Self.rowOffset, labelW: m.leftLabelW, pctW: m.pctW)
 
         let rx = drawSeparator(x: x0 + m.leftColW, midY: midY)
 
@@ -183,7 +183,7 @@ final class StatusBarView: NSView {
     }
 
     /// Draw the RESETS label and reset-time string in the bottom-left cell.
-    private func drawTimeRow(x: CGFloat, centerY: CGFloat, labelW: CGFloat) {
+    private func drawTimeRow(x: CGFloat, centerY: CGFloat, labelW: CGFloat, pctW: CGFloat) {
         // "RESETS" — right-aligned in labelW, secondary label color (same style as gauge labels)
         let labelAttrs: [NSAttributedString.Key: Any] = [
             .font: Self.labelFont,
@@ -195,14 +195,15 @@ final class StatusBarView: NSView {
                               y: centerY - rSize.height / 2),
                   withAttributes: labelAttrs)
 
-        // Reset time — left-aligned after label gap, primary label color
+        // Reset time — right-aligned to the same right edge as percent values above it
         let timeAttrs: [NSAttributedString.Key: Any] = [
             .font: Self.timeFont,
             .foregroundColor: NSColor.labelColor,
         ]
         let tStr  = timeText() as NSString
         let tSize = tStr.size(withAttributes: timeAttrs)
-        tStr.draw(at: NSPoint(x: x + labelW + Self.labelBarGap,
+        let pctRightEdge = x + labelW + Self.labelBarGap + Self.barW + Self.barTextGap + pctW
+        tStr.draw(at: NSPoint(x: pctRightEdge - tSize.width,
                               y: centerY - tSize.height / 2),
                   withAttributes: timeAttrs)
     }
