@@ -239,7 +239,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         alert.addButton(withTitle: "Save")                           // .alertFirstButtonReturn
         alert.addButton(withTitle: "Open claude.ai/settings/usage") // .alertSecondButtonReturn
         alert.addButton(withTitle: "Cancel")                        // .alertThirdButtonReturn
-        alert.window.initialFirstResponder = field
+        // WHY layout() + makeFirstResponder: initialFirstResponder alone is not enough
+        // for NSAlert accessoryViews in LSUIElement apps — AppKit won't focus the field
+        // until the window is laid out, so ⌘V paste is swallowed. layout() finalises
+        // the view hierarchy; makeFirstResponder() then gives the field keyboard focus.
+        alert.layout()
+        alert.window.makeFirstResponder(field)
 
         switch alert.runModal() {
         case .alertFirstButtonReturn:
