@@ -1,9 +1,9 @@
 /// StatusBarView.swift — Stats-style compact usage display for the macOS menu bar.
 ///
-/// Custom NSView subclass that draws three stacked rows (top → bottom: 5H / model / WEEK),
-/// each row = tiny right-aligned label + mini progress bar + tiny percent, with the 5h
-/// reset time on the right. Visual style inspired by the Stats menu bar app (Mockup D,
-/// chosen 2026-07-10).
+/// Custom NSView subclass that draws a 2×2 grid of usage rows:
+///   Left column:  5H gauge (top)    /  RESETS <time> (bottom)
+///   Right column: WK gauge  (top)   /  F gauge        (bottom)
+/// Columns are separated by a vertical rule. 7pt labels / 9pt monospaced-digit values.
 ///
 /// Rendering is pure NSColor / NSBezierPath so it adapts automatically to light/dark
 /// menu bar appearance (all colors are dynamic NSColor semantics).
@@ -17,33 +17,36 @@ final class StatusBarView: NSView {
 
     /// Full content height (22pt = standard macOS menu bar content area).
     private static let barHeight: CGFloat = 22
-    /// Vertical pitch between stacked row centers: 3 rows × 7pt ≈ 21pt in 22pt.
-    private static let rowPitch: CGFloat = 7
+    /// Half-spacing between the two row centers: rows sit at midY ± rowOffset.
+    private static let rowOffset: CGFloat = 5.5
 
-    // Fonts. Stacked rows cap text at tiny sizes (Mockup D, chosen 2026-07-10):
-    // 5pt labels / 6.5pt percents; the reset time keeps the old 11pt for glanceability.
-    private static let labelFont = NSFont.systemFont(ofSize: 5, weight: .semibold)
-    private static let percentFont = NSFont.monospacedDigitSystemFont(ofSize: 6.5, weight: .medium)
-    private static let timeFont = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
+    // Fonts. Two rows split 22pt, so labels can be larger than the old 3-row stack:
+    // 7pt labels / 9pt monospaced-digit values (two-column update 2026-07-11).
+    private static let labelFont   = NSFont.systemFont(ofSize: 7, weight: .semibold)
+    private static let percentFont = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .medium)
+    private static let timeFont    = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .medium)
 
     // Mini progress bar dimensions
-    private static let barW: CGFloat = 16
-    private static let barH: CGFloat = 3
-    private static let barCorner: CGFloat = 1.5
+    private static let barW: CGFloat = 20
+    private static let barH: CGFloat = 4
+    private static let barCorner: CGFloat = 2
 
     // Horizontal gaps inside a row
-    private static let labelBarGap: CGFloat = 2   // label column → bar
-    private static let barTextGap: CGFloat = 3    // bar → percent column
+    private static let labelBarGap: CGFloat = 3   // label column → bar
+    private static let barTextGap: CGFloat  = 3   // bar → percent column
 
-    // Vertical separator dimensions (unchanged from horizontal layout)
-    private static let sepW: CGFloat = 1
-    private static let sepH: CGFloat = 12
+    // Vertical separator dimensions
+    private static let sepW: CGFloat   = 1
+    private static let sepH: CGFloat   = 16   // spans both rows
     private static let sepPad: CGFloat = 6
+
+    /// Hardcoded label for the reset-time row (wider than "5H", sets the left label column width).
+    private static let resetLabel = "RESETS"
 
     // MARK: - State
 
     var snapshot: UsageSnapshot?
-    var resetDate: Date?    // session.resetsAt — shown on the right as the compact reset time
+    var resetDate: Date?   // session.resetsAt — shown in the bottom-left cell
     var isDegraded = false
 
     // MARK: - Init
@@ -77,69 +80,86 @@ final class StatusBarView: NSView {
     /// Compute the total drawing width for the current content.
     /// Called externally by AppDelegate to set statusItem.length.
     func preferredWidth() -> CGFloat {
-        let entries = bucketsForDisplay()
-        let cols = columnWidths(entries)
-        let rowW = cols.label + Self.labelBarGap + Self.barW + Self.barTextGap + cols.pct
-        let timeW = (timeText() as NSString).size(withAttributes: [.font: Self.timeFont]).width
-        return 2 + rowW + Self.sepPad * 2 + Self.sepW + ceil(timeW) + 2   // 2pt padding each side
+        let m = gridMetrics()
+        return 2 + m.leftColW + Self.sepPad + Self.sepW + Self.sepPad + m.rightColW + 2
     }
 
-    /// Label and percent column widths for the current entries. Columns are sized
-    /// to the widest string so rows align; percent digits are tabular already.
-    private func columnWidths(_ entries: [SegmentEntry]) -> (label: CGFloat, pct: CGFloat) {
-        var labelW: CGFloat = 0
-        var pctW: CGFloat = 0
-        for e in entries {
-            labelW = max(labelW, (e.label as NSString).size(withAttributes: [.font: Self.labelFont]).width)
-            pctW   = max(pctW,   (e.percentText as NSString).size(withAttributes: [.font: Self.percentFont]).width)
+    // MARK: - Grid metrics
+
+    private struct GridMetrics {
+        let leftLabelW: CGFloat    // max("5H"-entry label, "RESETS") at labelFont
+        let rightLabelW: CGFloat   // max(week label, fable label) at labelFont
+        let pctW: CGFloat          // max percentText over all 3 entries at percentFont
+        let leftColW: CGFloat
+        let rightColW: CGFloat
+    }
+
+    private func gridMetrics() -> GridMetrics {
+        let e = entriesForDisplay()
+
+        func measuredLabelW(_ s: String) -> CGFloat {
+            ceil((s as NSString).size(withAttributes: [.font: Self.labelFont]).width)
         }
-        return (ceil(labelW), ceil(pctW))
+        func measuredPctW(_ s: String) -> CGFloat {
+            ceil((s as NSString).size(withAttributes: [.font: Self.percentFont]).width)
+        }
+
+        let leftLabelW  = max(measuredLabelW(e.session.label), measuredLabelW(Self.resetLabel))
+        let rightLabelW = max(measuredLabelW(e.week.label),    measuredLabelW(e.fable.label))
+        let allPctW     = max(measuredPctW(e.session.percentText),
+                          max(measuredPctW(e.fable.percentText), measuredPctW(e.week.percentText)))
+
+        func gaugeRowW(_ lw: CGFloat) -> CGFloat {
+            lw + Self.labelBarGap + Self.barW + Self.barTextGap + allPctW
+        }
+        let timeStrW = ceil((timeText() as NSString).size(withAttributes: [.font: Self.timeFont]).width)
+        let timeRowW = leftLabelW + Self.labelBarGap + timeStrW
+
+        let leftColW  = max(gaugeRowW(leftLabelW), timeRowW)
+        let rightColW = gaugeRowW(rightLabelW)
+
+        return GridMetrics(
+            leftLabelW: leftLabelW,
+            rightLabelW: rightLabelW,
+            pctW: allPctW,
+            leftColW: leftColW,
+            rightColW: rightColW
+        )
     }
 
     // MARK: - Drawing
 
     override func draw(_ dirtyRect: NSRect) {
-        let entries = bucketsForDisplay()
-        let cols = columnWidths(entries)
+        let e = entriesForDisplay()
+        let m = gridMetrics()
         let midY = bounds.midY
-        let x: CGFloat = 2   // left padding
+        let x0: CGFloat = 2
 
-        // Rows stacked top→bottom: 5H / model / WEEK, centered on midY.
-        for (i, entry) in entries.enumerated() {
-            let rowCenterY = midY + Self.rowPitch * CGFloat(1 - i)   // +7, 0, -7
-            drawRow(entry: entry, x: x, centerY: rowCenterY, cols: cols)
-        }
+        drawRow(entry: e.session, x: x0, centerY: midY + Self.rowOffset, labelW: m.leftLabelW,  pctW: m.pctW)
+        drawTimeRow(x: x0, centerY: midY - Self.rowOffset, labelW: m.leftLabelW)
 
-        let rowW = cols.label + Self.labelBarGap + Self.barW + Self.barTextGap + cols.pct
-        let tx = drawSeparator(x: x + rowW, midY: midY)
+        let rx = drawSeparator(x: x0 + m.leftColW, midY: midY)
 
-        // Time block (unchanged behavior, font constant renamed to timeFont)
-        let tStr = timeText() as NSString
-        let tAttrs: [NSAttributedString.Key: Any] = [
-            .font: Self.timeFont,
-            .foregroundColor: NSColor.labelColor,
-        ]
-        let tSize = tStr.size(withAttributes: tAttrs)
-        tStr.draw(in: NSRect(x: tx, y: midY - tSize.height / 2, width: tSize.width, height: tSize.height),
-                  withAttributes: tAttrs)
+        drawRow(entry: e.week,  x: rx, centerY: midY + Self.rowOffset, labelW: m.rightLabelW, pctW: m.pctW)
+        drawRow(entry: e.fable, x: rx, centerY: midY - Self.rowOffset, labelW: m.rightLabelW, pctW: m.pctW)
     }
 
     // MARK: - Row drawing
 
-    private func drawRow(entry: SegmentEntry, x: CGFloat, centerY: CGFloat, cols: (label: CGFloat, pct: CGFloat)) {
+    private func drawRow(entry: SegmentEntry, x: CGFloat, centerY: CGFloat, labelW: CGFloat, pctW: CGFloat) {
         // -- Label: right-aligned in its column, vertically centered on the row --
         let labelAttrs: [NSAttributedString.Key: Any] = [
             .font: Self.labelFont,
             .foregroundColor: NSColor.secondaryLabelColor,
         ]
-        let labelStr = entry.label as NSString
+        let labelStr  = entry.label as NSString
         let labelSize = labelStr.size(withAttributes: labelAttrs)
-        labelStr.draw(at: NSPoint(x: x + cols.label - labelSize.width,
+        labelStr.draw(at: NSPoint(x: x + labelW - labelSize.width,
                                   y: centerY - labelSize.height / 2),
                       withAttributes: labelAttrs)
 
         // -- Mini progress bar (track + fill), reusing fillColor(for:) --
-        let barX = x + cols.label + Self.labelBarGap
+        let barX      = x + labelW + Self.labelBarGap
         let trackRect = NSRect(x: barX, y: centerY - Self.barH / 2, width: Self.barW, height: Self.barH)
         NSColor.labelColor.withAlphaComponent(0.15).setFill()
         NSBezierPath(roundedRect: trackRect, xRadius: Self.barCorner, yRadius: Self.barCorner).fill()
@@ -155,11 +175,36 @@ final class StatusBarView: NSView {
             .font: Self.percentFont,
             .foregroundColor: NSColor.labelColor,
         ]
-        let pStr = entry.percentText as NSString
+        let pStr  = entry.percentText as NSString
         let pSize = pStr.size(withAttributes: pAttrs)
-        pStr.draw(at: NSPoint(x: barX + Self.barW + Self.barTextGap + cols.pct - pSize.width,
+        pStr.draw(at: NSPoint(x: barX + Self.barW + Self.barTextGap + pctW - pSize.width,
                               y: centerY - pSize.height / 2),
                   withAttributes: pAttrs)
+    }
+
+    /// Draw the RESETS label and reset-time string in the bottom-left cell.
+    private func drawTimeRow(x: CGFloat, centerY: CGFloat, labelW: CGFloat) {
+        // "RESETS" — right-aligned in labelW, secondary label color (same style as gauge labels)
+        let labelAttrs: [NSAttributedString.Key: Any] = [
+            .font: Self.labelFont,
+            .foregroundColor: NSColor.secondaryLabelColor,
+        ]
+        let rStr  = Self.resetLabel as NSString
+        let rSize = rStr.size(withAttributes: labelAttrs)
+        rStr.draw(at: NSPoint(x: x + labelW - rSize.width,
+                              y: centerY - rSize.height / 2),
+                  withAttributes: labelAttrs)
+
+        // Reset time — left-aligned after label gap, primary label color
+        let timeAttrs: [NSAttributedString.Key: Any] = [
+            .font: Self.timeFont,
+            .foregroundColor: NSColor.labelColor,
+        ]
+        let tStr  = timeText() as NSString
+        let tSize = tStr.size(withAttributes: timeAttrs)
+        tStr.draw(at: NSPoint(x: x + labelW + Self.labelBarGap,
+                              y: centerY - tSize.height / 2),
+                  withAttributes: timeAttrs)
     }
 
     @discardableResult
@@ -193,13 +238,13 @@ final class StatusBarView: NSView {
         let percentText: String
     }
 
-    private func bucketsForDisplay() -> [SegmentEntry] {
+    private func entriesForDisplay() -> (session: SegmentEntry, fable: SegmentEntry, week: SegmentEntry) {
         if isDegraded || snapshot == nil {
-            return [
-                SegmentEntry(label: menuBarShortLabel("5H"),    percent: 0, percentText: "–"),
-                SegmentEntry(label: menuBarShortLabel("FABLE"), percent: 0, percentText: "–"),
-                SegmentEntry(label: menuBarShortLabel("WEEK"),  percent: 0, percentText: "–"),
-            ]
+            return (
+                session: SegmentEntry(label: menuBarShortLabel("5H"),    percent: 0, percentText: "–"),
+                fable:   SegmentEntry(label: menuBarShortLabel("FABLE"), percent: 0, percentText: "–"),
+                week:    SegmentEntry(label: menuBarShortLabel("WEEK"),  percent: 0, percentText: "–")
+            )
         }
         let snap = snapshot!
         func entry(_ bucket: Bucket?, fallbackLabel: String) -> SegmentEntry {
@@ -208,11 +253,11 @@ final class StatusBarView: NSView {
             }
             return SegmentEntry(label: menuBarShortLabel(b.label), percent: b.percent, percentText: "\(b.percent)%")
         }
-        return [
-            entry(snap.session,      fallbackLabel: "5H"),
-            entry(snap.weeklyScoped, fallbackLabel: "FABLE"),
-            entry(snap.weeklyAll,    fallbackLabel: "WEEK"),
-        ]
+        return (
+            session: entry(snap.session,      fallbackLabel: "5H"),
+            fable:   entry(snap.weeklyScoped, fallbackLabel: "FABLE"),
+            week:    entry(snap.weeklyAll,    fallbackLabel: "WEEK")
+        )
     }
 
     private func timeText() -> String {

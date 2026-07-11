@@ -152,8 +152,8 @@ public func band(forPercent p: Int) -> Band {
 
 // MARK: - Menu bar short label
 
-/// Short label for the stacked menu bar rows. The stacked layout has room for
-/// ~2 characters of 5pt text per row, so long labels are abbreviated:
+/// Short label for the two-column menu bar grid. The grid uses 7pt labels per cell,
+/// so long model names are abbreviated:
 /// "5H" → "5H", "WEEK" → "WK", "FABLE" → "F", other models → first two characters.
 public func menuBarShortLabel(_ label: String) -> String {
     switch label {
