@@ -24,5 +24,4 @@ install and development. Read it before working in that directory.
 - `.github/workflows/clusage-menubar-release.yml` runs on every push to `main`
   touching `clusage-menubar/**`: always runs `make check`; publishes tag + DMG
   release only when the `VERSION` tag doesn't exist yet. No bump ⇒ CI checks only.
-- Signing is ad-hoc unless `CODESIGN_IDENTITY` is configured. Keychain access
-  re-prompts after each rebuild because the macOS ACL binds to the code signature.
+- Signing is ad-hoc unless `CODESIGN_IDENTITY` is configured.
