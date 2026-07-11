@@ -208,6 +208,16 @@ func testBand() {
     expectEqual(band(forPercent: 100), .critical, "band(100)=critical")
 }
 
+// MARK: - Tests: menuBarShortLabel
+
+func testMenuBarShortLabel() {
+    expectEqual(menuBarShortLabel("5H"), "5H", "5H stays 5H")
+    expectEqual(menuBarShortLabel("WEEK"), "WK", "WEEK abbreviates to WK")
+    expectEqual(menuBarShortLabel("FABLE"), "F",  "FABLE maps to F")
+    expectEqual(menuBarShortLabel("op"), "OP", "short labels are uppercased")
+    expectEqual(menuBarShortLabel("  "), "–", "blank label falls back to dash")
+}
+
 // MARK: - Run all tests
 
 print("Running ClusageTests…")
@@ -220,6 +230,7 @@ testSanitizeCookie()
 testOrgIdFromCookie()
 testMenuBarTime()
 testBand()
+testMenuBarShortLabel()
 
 if failures == 0 {
     print("OK — all tests passed")

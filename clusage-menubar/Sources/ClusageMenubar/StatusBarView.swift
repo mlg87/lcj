@@ -1,9 +1,9 @@
 /// StatusBarView.swift — Stats-style compact usage display for the macOS menu bar.
 ///
-/// Custom NSView subclass that draws three usage segments (5H / FABLE / WEEK) each
-/// with a mini label stacked above a progress bar + percent value, separated by thin
-/// vertical dividers, with the 5h reset time on the right. Visual style inspired by
-/// the Stats menu bar app (tiny label + value pairs, thin separators).
+/// Custom NSView subclass that draws three stacked rows (top → bottom: 5H / model / WEEK),
+/// each row = tiny right-aligned label + mini progress bar + tiny percent, with the 5h
+/// reset time on the right. Visual style inspired by the Stats menu bar app (Mockup D,
+/// chosen 2026-07-10).
 ///
 /// Rendering is pure NSColor / NSBezierPath so it adapts automatically to light/dark
 /// menu bar appearance (all colors are dynamic NSColor semantics).
@@ -17,21 +17,28 @@ final class StatusBarView: NSView {
 
     /// Full content height (22pt = standard macOS menu bar content area).
     private static let barHeight: CGFloat = 22
-    private static let labelFont = NSFont.systemFont(ofSize: 7, weight: .semibold)
-    private static let valueFont = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
+    /// Vertical pitch between stacked row centers: 3 rows × 7pt ≈ 21pt in 22pt.
+    private static let rowPitch: CGFloat = 7
+
+    // Fonts. Stacked rows cap text at tiny sizes (Mockup D, chosen 2026-07-10):
+    // 5pt labels / 6.5pt percents; the reset time keeps the old 11pt for glanceability.
+    private static let labelFont = NSFont.systemFont(ofSize: 5, weight: .semibold)
+    private static let percentFont = NSFont.monospacedDigitSystemFont(ofSize: 6.5, weight: .medium)
+    private static let timeFont = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
 
     // Mini progress bar dimensions
-    private static let barW: CGFloat = 24
+    private static let barW: CGFloat = 16
     private static let barH: CGFloat = 3
     private static let barCorner: CGFloat = 1.5
 
-    // Gap between bar and percent text
-    private static let barTextGap: CGFloat = 3
+    // Horizontal gaps inside a row
+    private static let labelBarGap: CGFloat = 2   // label column → bar
+    private static let barTextGap: CGFloat = 3    // bar → percent column
 
-    // Vertical separator dimensions
+    // Vertical separator dimensions (unchanged from horizontal layout)
     private static let sepW: CGFloat = 1
     private static let sepH: CGFloat = 12
-    private static let sepPad: CGFloat = 6   // horizontal padding each side of the separator
+    private static let sepPad: CGFloat = 6
 
     // MARK: - State
 
@@ -70,103 +77,89 @@ final class StatusBarView: NSView {
     /// Compute the total drawing width for the current content.
     /// Called externally by AppDelegate to set statusItem.length.
     func preferredWidth() -> CGFloat {
-        let buckets = bucketsForDisplay()
-        var w: CGFloat = 0
-        for (i, entry) in buckets.enumerated() {
-            if i > 0 { w += Self.sepPad * 2 + Self.sepW }
-            w += segmentWidth(entry.label, percentText: entry.percentText)
+        let entries = bucketsForDisplay()
+        let cols = columnWidths(entries)
+        let rowW = cols.label + Self.labelBarGap + Self.barW + Self.barTextGap + cols.pct
+        let timeW = (timeText() as NSString).size(withAttributes: [.font: Self.timeFont]).width
+        return 2 + rowW + Self.sepPad * 2 + Self.sepW + ceil(timeW) + 2   // 2pt padding each side
+    }
+
+    /// Label and percent column widths for the current entries. Columns are sized
+    /// to the widest string so rows align; percent digits are tabular already.
+    private func columnWidths(_ entries: [SegmentEntry]) -> (label: CGFloat, pct: CGFloat) {
+        var labelW: CGFloat = 0
+        var pctW: CGFloat = 0
+        for e in entries {
+            labelW = max(labelW, (e.label as NSString).size(withAttributes: [.font: Self.labelFont]).width)
+            pctW   = max(pctW,   (e.percentText as NSString).size(withAttributes: [.font: Self.percentFont]).width)
         }
-        // separator before time
-        w += Self.sepPad * 2 + Self.sepW
-        // time text
-        let timeStr = timeText()
-        w += (timeStr as NSString).size(withAttributes: [.font: Self.valueFont]).width
-        return w + 4   // 2pt padding each side
+        return (ceil(labelW), ceil(pctW))
     }
 
     // MARK: - Drawing
 
     override func draw(_ dirtyRect: NSRect) {
-        let buckets = bucketsForDisplay()
+        let entries = bucketsForDisplay()
+        let cols = columnWidths(entries)
         let midY = bounds.midY
-        var x: CGFloat = 2   // left padding
+        let x: CGFloat = 2   // left padding
 
-        for (i, entry) in buckets.enumerated() {
-            if i > 0 { x = drawSeparator(x: x, midY: midY) }
-            x = drawSegment(entry: entry, x: x, midY: midY)
+        // Rows stacked top→bottom: 5H / model / WEEK, centered on midY.
+        for (i, entry) in entries.enumerated() {
+            let rowCenterY = midY + Self.rowPitch * CGFloat(1 - i)   // +7, 0, -7
+            drawRow(entry: entry, x: x, centerY: rowCenterY, cols: cols)
         }
 
-        // Separator before time
-        x = drawSeparator(x: x, midY: midY)
+        let rowW = cols.label + Self.labelBarGap + Self.barW + Self.barTextGap + cols.pct
+        let tx = drawSeparator(x: x + rowW, midY: midY)
 
-        // Time block
+        // Time block (unchanged behavior, font constant renamed to timeFont)
         let tStr = timeText() as NSString
         let tAttrs: [NSAttributedString.Key: Any] = [
-            .font: Self.valueFont,
+            .font: Self.timeFont,
             .foregroundColor: NSColor.labelColor,
         ]
         let tSize = tStr.size(withAttributes: tAttrs)
-        let tRect = NSRect(x: x, y: midY - tSize.height / 2, width: tSize.width, height: tSize.height)
-        tStr.draw(in: tRect, withAttributes: tAttrs)
+        tStr.draw(in: NSRect(x: tx, y: midY - tSize.height / 2, width: tSize.width, height: tSize.height),
+                  withAttributes: tAttrs)
     }
 
-    // MARK: - Segment drawing
+    // MARK: - Row drawing
 
-    @discardableResult
-    private func drawSegment(entry: SegmentEntry, x: CGFloat, midY: CGFloat) -> CGFloat {
-        var cx = x
-
-        // Vertical layout: label on top, value row below
-        let labelH = (entry.label as NSString).size(withAttributes: [.font: Self.labelFont]).height
-        let valueH = Self.barH    // reference height for vertical centre of value row
-        let totalH = labelH + 2 + max(valueH, Self.valueFont.capHeight)
-
-        let valueRowY = midY - totalH / 2              // bottom of value row area
-        let labelY    = valueRowY + max(valueH, Self.valueFont.capHeight) + 2
-
-        // -- Label --
+    private func drawRow(entry: SegmentEntry, x: CGFloat, centerY: CGFloat, cols: (label: CGFloat, pct: CGFloat)) {
+        // -- Label: right-aligned in its column, vertically centered on the row --
         let labelAttrs: [NSAttributedString.Key: Any] = [
             .font: Self.labelFont,
             .foregroundColor: NSColor.secondaryLabelColor,
         ]
         let labelStr = entry.label as NSString
-        let labelW = labelStr.size(withAttributes: labelAttrs).width
+        let labelSize = labelStr.size(withAttributes: labelAttrs)
+        labelStr.draw(at: NSPoint(x: x + cols.label - labelSize.width,
+                                  y: centerY - labelSize.height / 2),
+                      withAttributes: labelAttrs)
 
-        // Compute full segment width for label centering
-        let segW = segmentWidth(entry.label, percentText: entry.percentText)
-        let labelX = cx + (segW - labelW) / 2
-        labelStr.draw(at: NSPoint(x: labelX, y: labelY), withAttributes: labelAttrs)
-
-        // -- Mini progress bar (track) --
-        let barY = valueRowY + (max(valueH, Self.valueFont.capHeight) - Self.barH) / 2
-        let trackRect = NSRect(x: cx, y: barY, width: Self.barW, height: Self.barH)
-        let trackPath = NSBezierPath(roundedRect: trackRect, xRadius: Self.barCorner, yRadius: Self.barCorner)
+        // -- Mini progress bar (track + fill), reusing fillColor(for:) --
+        let barX = x + cols.label + Self.labelBarGap
+        let trackRect = NSRect(x: barX, y: centerY - Self.barH / 2, width: Self.barW, height: Self.barH)
         NSColor.labelColor.withAlphaComponent(0.15).setFill()
-        trackPath.fill()
-
-        // -- Mini progress bar (fill) --
+        NSBezierPath(roundedRect: trackRect, xRadius: Self.barCorner, yRadius: Self.barCorner).fill()
         let fillW = CGFloat(entry.percent) / 100 * Self.barW
         if fillW > 0 {
-            let fillRect = NSRect(x: cx, y: barY, width: fillW, height: Self.barH)
-            let fillPath = NSBezierPath(roundedRect: fillRect, xRadius: Self.barCorner, yRadius: Self.barCorner)
+            let fillRect = NSRect(x: barX, y: centerY - Self.barH / 2, width: fillW, height: Self.barH)
             fillColor(for: entry.percent).setFill()
-            fillPath.fill()
+            NSBezierPath(roundedRect: fillRect, xRadius: Self.barCorner, yRadius: Self.barCorner).fill()
         }
 
-        cx += Self.barW + Self.barTextGap
-
-        // -- Percent text --
-        let pStr = entry.percentText as NSString
+        // -- Percent: right-aligned in its column so digits line up --
         let pAttrs: [NSAttributedString.Key: Any] = [
-            .font: Self.valueFont,
+            .font: Self.percentFont,
             .foregroundColor: NSColor.labelColor,
         ]
-        let pH = pStr.size(withAttributes: pAttrs).height
-        let pY = valueRowY + (max(valueH, Self.valueFont.capHeight) - pH) / 2
-        pStr.draw(at: NSPoint(x: cx, y: pY), withAttributes: pAttrs)
-        cx += pStr.size(withAttributes: pAttrs).width
-
-        return cx
+        let pStr = entry.percentText as NSString
+        let pSize = pStr.size(withAttributes: pAttrs)
+        pStr.draw(at: NSPoint(x: barX + Self.barW + Self.barTextGap + cols.pct - pSize.width,
+                              y: centerY - pSize.height / 2),
+                  withAttributes: pAttrs)
     }
 
     @discardableResult
@@ -203,17 +196,17 @@ final class StatusBarView: NSView {
     private func bucketsForDisplay() -> [SegmentEntry] {
         if isDegraded || snapshot == nil {
             return [
-                SegmentEntry(label: "5H",   percent: 0, percentText: "–"),
-                SegmentEntry(label: "FABLE",percent: 0, percentText: "–"),
-                SegmentEntry(label: "WEEK", percent: 0, percentText: "–"),
+                SegmentEntry(label: menuBarShortLabel("5H"),    percent: 0, percentText: "–"),
+                SegmentEntry(label: menuBarShortLabel("FABLE"), percent: 0, percentText: "–"),
+                SegmentEntry(label: menuBarShortLabel("WEEK"),  percent: 0, percentText: "–"),
             ]
         }
         let snap = snapshot!
         func entry(_ bucket: Bucket?, fallbackLabel: String) -> SegmentEntry {
             guard let b = bucket else {
-                return SegmentEntry(label: fallbackLabel, percent: 0, percentText: "–")
+                return SegmentEntry(label: menuBarShortLabel(fallbackLabel), percent: 0, percentText: "–")
             }
-            return SegmentEntry(label: b.label, percent: b.percent, percentText: "\(b.percent)%")
+            return SegmentEntry(label: menuBarShortLabel(b.label), percent: b.percent, percentText: "\(b.percent)%")
         }
         return [
             entry(snap.session,      fallbackLabel: "5H"),
@@ -227,10 +220,4 @@ final class StatusBarView: NSView {
         return menuBarTime(resetDate)
     }
 
-    private func segmentWidth(_ label: String, percentText: String) -> CGFloat {
-        let labelW = (label as NSString).size(withAttributes: [.font: Self.labelFont]).width
-        let pW = (percentText as NSString).size(withAttributes: [.font: Self.valueFont]).width
-        let valueRowW = Self.barW + Self.barTextGap + pW
-        return max(labelW, valueRowW)
-    }
 }

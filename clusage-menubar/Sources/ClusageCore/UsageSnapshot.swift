@@ -150,6 +150,22 @@ public func band(forPercent p: Int) -> Band {
     }
 }
 
+// MARK: - Menu bar short label
+
+/// Short label for the stacked menu bar rows. The stacked layout has room for
+/// ~2 characters of 5pt text per row, so long labels are abbreviated:
+/// "5H" → "5H", "WEEK" → "WK", "FABLE" → "F", other models → first two characters.
+public func menuBarShortLabel(_ label: String) -> String {
+    switch label {
+    case "5H":    return "5H"
+    case "WEEK":  return "WK"
+    case "FABLE": return "F"
+    default:
+        let trimmed = label.trimmingCharacters(in: .whitespaces)
+        return trimmed.isEmpty ? "–" : String(trimmed.prefix(2)).uppercased()
+    }
+}
+
 // MARK: - Helpers (internal)
 
 /// Clamp a percent value to 0...100.
