@@ -21,4 +21,4 @@ Initial release.
 - Universal binary (arm64 + x86_64) assembled via two SPM release builds + `lipo`.
 - Ad-hoc code signing by default; `CODESIGN_IDENTITY` env enables notarization-ready signing.
 - DMG distribution with drag-to-Applications layout.
-- Semver releases via `release.sh` with guards (clean tree, main branch, up-to-date with origin, tag uniqueness, CHANGELOG section required).
+- Automated releases: pushes to `main` touching `clusage-menubar/` run CI checks and, on a new `VERSION`, tag and publish the DMG release with notes from this file (GitHub Actions, macos-15).

@@ -1,0 +1,101 @@
+# Auto-release clusage-menubar.
+#
+# HOW A RELEASE HAPPENS (humans & agents — see also AGENTS.md "Releasing"):
+#   1. A PR bumps clusage-menubar/VERSION and adds a matching "## vX.Y.Z"
+#      section to clusage-menubar/CHANGELOG.md (notes are taken verbatim).
+#   2. The PR merges to main.
+#   3. This workflow sees the push, runs `make check`, notices the tag
+#      clusage-menubar-v<VERSION> doesn't exist, builds the universal binary,
+#      creates the DMG, and publishes the tag + GitHub release.
+# Merges that don't bump VERSION run CI checks and skip publishing.
+# NEVER create clusage-menubar-v* tags or releases manually — CI owns them.
+#
+# Trigger includes this file itself so a broken workflow can be fixed and the
+# release retried without a dummy bump. Tags/releases are created via the
+# Releases API (gh release create --target), which never touches the main
+# branch or its protection rules.
+name: clusage-menubar release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'clusage-menubar/**'
+      - '.github/workflows/clusage-menubar-release.yml'
+
+permissions:
+  contents: write   # create tag + release via the Releases API
+
+concurrency:
+  group: clusage-menubar-release
+  cancel-in-progress: false   # queue racing merges; never abort a half-published release
+
+jobs:
+  release:
+    # macos-15: default Xcode 16.x = Swift 6 toolchain (Package.swift needs
+    # swift-tools-version 6.0). macos-14's default Xcode 15.x is Swift 5.10 — too old.
+    runs-on: macos-15
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: clusage-menubar
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          sw_vers
+          swift --version
+          # The linter ships in Ubuntu images but is not guaranteed on macOS runners
+          command -v shellcheck >/dev/null || brew install shellcheck
+
+      - name: Check (build + tests + shellcheck)
+        run: make check
+
+      - name: Release gate
+        id: gate
+        run: |
+          VERSION="$(cat VERSION)"
+          TAG="clusage-menubar-v${VERSION}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null; then
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "Tag ${TAG} already exists — CI checks only, no release."
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
+            echo "Tag ${TAG} is new — publishing a release."
+          fi
+
+      - name: Extract release notes
+        if: steps.gate.outputs.release == 'true'
+        run: |
+          VERSION="${{ steps.gate.outputs.version }}"
+          awk "/^## v${VERSION}\$/{found=1; next} found && /^## v/{exit} found{print}" CHANGELOG.md > "$RUNNER_TEMP/notes.md"
+          if ! [[ -s "$RUNNER_TEMP/notes.md" ]]; then
+            echo "ERROR: no '## v${VERSION}' section in CHANGELOG.md — add release notes before bumping VERSION" >&2
+            exit 1
+          fi
+
+      - name: Build universal app bundle
+        if: steps.gate.outputs.release == 'true'
+        run: ./build.sh
+
+      - name: Create DMG
+        if: steps.gate.outputs.release == 'true'
+        env:
+          SKIP_DMG_LAYOUT: "1"   # no Finder session on headless runners
+        run: ./create_dmg.sh
+
+      - name: Publish GitHub release
+        if: steps.gate.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # --target creates tag + release in one API call, so a partially
+          # failed run is safely re-runnable (gate still sees no tag).
+          gh release create "${{ steps.gate.outputs.tag }}" \
+            "ClusageMenubar-${{ steps.gate.outputs.version }}.dmg" \
+            --target "$GITHUB_SHA" \
+            --title "clusage-menubar v${{ steps.gate.outputs.version }}" \
+            --notes-file "$RUNNER_TEMP/notes.md"

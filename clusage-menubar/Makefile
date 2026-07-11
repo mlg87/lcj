@@ -5,7 +5,7 @@ test:
 	swift run ClusageTests
 
 lint:
-	shellcheck build.sh make_icon.sh create_dmg.sh release.sh
+	shellcheck build.sh make_icon.sh create_dmg.sh
 
 check: build test lint
 

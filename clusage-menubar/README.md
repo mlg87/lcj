@@ -33,8 +33,7 @@ already holds — no cookie pasting, no API key setup.
 
 ### Build from source
 
-Prerequisites: macOS 13+, Xcode Command Line Tools (`xcode-select --install`),
-`gh` CLI (for `release.sh` only).
+Prerequisites: macOS 13+, Xcode Command Line Tools (`xcode-select --install`).
 
 ```sh
 git clone https://github.com/mlg87/lcj.git
@@ -90,22 +89,19 @@ make dmg      # app + ./create_dmg.sh — DMG in clusage-menubar/
 | `ARCHS` | `arm64 x86_64` | Architectures to build. Set to `arm64` if x86_64 CLT build fails. |
 | `CODESIGN_IDENTITY` | `-` (ad-hoc) | Set to your Developer ID for distribution signing. |
 | `NOTARY_PROFILE` | *(unset)* | `notarytool` credential profile; DMG is notarized only when both this and `CODESIGN_IDENTITY` are set. |
+| `SKIP_DMG_LAYOUT` | *(unset)* | Set to any value to skip the Finder AppleScript icon-layout step (used on headless CI). |
 
 ---
 
 ## Release procedure
 
+Releases are fully automated by [`.github/workflows/clusage-menubar-release.yml`](../.github/workflows/clusage-menubar-release.yml). Never create `clusage-menubar-v*` tags or releases manually — CI owns them.
+
 1. Bump `VERSION` (e.g. `echo "0.2.0" > VERSION`).
-2. Add a `## v0.2.0` section to `CHANGELOG.md`.
-3. Open a PR, get it merged to `main`.
-4. From `clusage-menubar/` on the merged `main`:
+2. Add a `## v0.2.0` section to `CHANGELOG.md` — the release notes come from it verbatim; the workflow fails loudly without it.
+3. Open a PR with both changes, get it merged to `main`.
 
-```sh
-./release.sh
-```
-
-`release.sh` guards: clean tree · on main · up-to-date with origin · tag not exists · CHANGELOG section present. Then it builds, creates the DMG, tags, and publishes the GitHub release.
-
+On merge, the workflow runs `make check` and — because tag `clusage-menubar-v0.2.0` doesn't exist yet — builds the universal binary, creates the DMG, and publishes the tag + GitHub release. Merges that don't bump `VERSION` run CI checks only.
 ---
 
 ## Troubleshooting
