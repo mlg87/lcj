@@ -22,8 +22,10 @@ install and development. Read it before working in that directory.
   release-please + CI own them.
 - To ship: merge PRs with conventional-commit messages (`fix:`/`feat:`/…) touching
   `clusage-menubar/**`, then merge the auto-maintained release PR
-  ("chore(main): release clusage-menubar X.Y.Z"). CI tags, builds a Developer ID–signed
-  + notarized DMG, uploads it, and publishes the release (draft until the DMG is attached).
+  ("chore(main): release clusage-menubar X.Y.Z"). CI tags, builds an ad-hoc-signed
+  DMG + tar.gz (no Apple Developer Program or signing secrets needed), uploads them,
+  and publishes the release (draft until the assets are attached).
 - `.github/workflows/clusage-menubar-release.yml` runs on every push to `main` touching
-  `clusage-menubar/**`: always runs `make check`; the DMG job runs only when release-please
-  cut a new tag. Signing needs the six `MACOS_*`/`NOTARY_*`/`CODESIGN_IDENTITY` repo secrets.
+  `clusage-menubar/**`: always runs `make check`; the artifact job runs only when
+  release-please cut a new tag. Users install via `clusage-menubar/install.sh`
+  (curl/tar → no Gatekeeper quarantine) or the DMG (requires Open Anyway).

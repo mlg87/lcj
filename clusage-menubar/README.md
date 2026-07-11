@@ -20,20 +20,32 @@ paste it once, no keychain access, no API key setup.
 
 ## Install
 
-### Download (easiest)
+### Quick install (recommended)
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/mlg87/lcj/main/clusage-menubar/install.sh | bash
+```
+
+Downloads the latest release, installs to `/Applications` (or `~/Applications`
+for non-admin users), and launches it — **no Gatekeeper prompts**. WHY: macOS
+only blocks apps carrying the `com.apple.quarantine` attribute, which browsers
+set on downloads; `curl`/`tar` never set it, and the ad-hoc signature satisfies
+Apple Silicon's signed-code requirement.
+
+On first launch a dialog explains how to copy your session cookie from claude.ai
+(Settings → Usage → DevTools → Network → `usage` request → `Cookie` request header).
+Paste and Save; the usage bars appear within a few seconds.
+
+### Download the DMG (manual)
 
 1. Download `ClusageMenubar-X.Y.Z.dmg` from [Releases](../../releases).
 2. Open the DMG, drag **ClusageMenubar** to Applications.
-3. Launch it. A dialog explains how to copy your session cookie from claude.ai
-   (Settings → Usage → DevTools → Network → `usage` request → `Cookie` request header).
-   Paste and Save.
-4. The usage bars appear within a few seconds.
-
-> **Gatekeeper:** Releases v0.1.3+ are Developer ID–signed and notarized by Apple —
-> they open with no warnings. For older releases macOS blocks the app: go to
-> System Settings → Privacy & Security → scroll to the block message → **Open Anyway**
-> (macOS 15 removed the right-click → Open bypass), or run
-> `xattr -d com.apple.quarantine /Applications/ClusageMenubar.app`.
+3. **Gatekeeper blocks the first launch** — releases are ad-hoc signed, not
+   notarized (no Apple Developer Program). Either:
+   - System Settings → Privacy & Security → scroll to the block message →
+     **Open Anyway** (macOS 15 removed the right-click → Open bypass), or
+   - `xattr -d com.apple.quarantine /Applications/ClusageMenubar.app`
+4. Launch it and follow the cookie dialog as above.
 
 ### Build from source
 
@@ -87,11 +99,8 @@ make dmg      # app + ./create_dmg.sh — DMG in clusage-menubar/
 | Variable | Default | Purpose |
 |---|---|---|
 | `ARCHS` | `arm64 x86_64` | Architectures to build. Set to `arm64` if x86_64 CLT build fails. |
-| `CODESIGN_IDENTITY` | `-` (ad-hoc) | Set to your Developer ID for distribution signing. |
-| `NOTARY_PROFILE` | *(unset)* | Local dev: `notarytool` credential profile; DMG is notarized only when both this and `CODESIGN_IDENTITY` are set. |
-| `NOTARY_KEY_FILE` | *(unset)* | CI: path to App Store Connect API key (.p8 file). App Store Connect API-key alternative to `NOTARY_PROFILE` (all three required; used by CI). |
-| `NOTARY_KEY_ID` | *(unset)* | CI: App Store Connect API key ID (all three required; used by CI). |
-| `NOTARY_ISSUER_ID` | *(unset)* | CI: App Store Connect Issuer ID (all three required; used by CI). |
+| `CODESIGN_IDENTITY` | `-` (ad-hoc) | `build.sh`: optional signing identity. Releases ship ad-hoc; only needed for local experiments with a real/self-signed cert. |
+| `CLUSAGE_TARBALL` | *(unset)* | `install.sh`: path to a local `ClusageMenubar-*.tar.gz`; skips the download (script testing). |
 | `SKIP_DMG_LAYOUT` | *(unset)* | Set to any value to skip the Finder AppleScript icon-layout step (used on headless CI). |
 | `CLUSAGE_COOKIE` | *(unset)* | Overrides the stored session cookie at runtime (tests/CI). |
 
@@ -108,12 +117,11 @@ Never create `clusage-menubar-v*` tags/releases or edit `version.txt` by hand �
 2. release-please maintains a release PR ("chore(main): release clusage-menubar X.Y.Z")
    that accumulates merged changes, bumping `version.txt` and `CHANGELOG.md`.
 3. Merge that release PR when you want to ship. CI tags `clusage-menubar-vX.Y.Z`, builds the
-   Developer ID–signed + notarized DMG, uploads it, and publishes the release.
+   ad-hoc-signed universal app, uploads `ClusageMenubar-X.Y.Z.dmg` and
+   `ClusageMenubar-X.Y.Z.tar.gz` (consumed by `install.sh`), and publishes the release.
 
-Release builds require the repo secrets `MACOS_CERT_P12`, `MACOS_CERT_PASSWORD`,
-`CODESIGN_IDENTITY`, `NOTARY_KEY_P8`, `NOTARY_KEY_ID`, `NOTARY_ISSUER_ID`. The build job
-fails loudly if any is missing; the release stays a draft until the DMG uploads — add the
-secret and re-run the failed job.
+Release builds need **no signing secrets** — artifacts are ad-hoc signed. The
+release stays a draft until both assets upload; if the job fails, fix and re-run it.
 ---
 
 ## Troubleshooting

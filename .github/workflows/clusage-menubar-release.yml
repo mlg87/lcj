@@ -7,12 +7,9 @@
 #      commits, bumping clusage-menubar/version.txt + CHANGELOG.md.
 #   3. Merging that release PR: release-please creates the tag
 #      clusage-menubar-v<version> + a DRAFT GitHub release, then build-dmg
-#      builds the signed+notarized DMG, uploads it, and publishes.
+#      builds the ad-hoc-signed DMG + tar.gz (no Apple Developer Program,
+#      no signing secrets), uploads them, and publishes.
 # NEVER create clusage-menubar-v* tags or releases manually — CI owns them.
-#
-# Required repo secrets (build-dmg fails loudly without them):
-#   MACOS_CERT_P12, MACOS_CERT_PASSWORD, CODESIGN_IDENTITY,
-#   NOTARY_KEY_P8, NOTARY_KEY_ID, NOTARY_ISSUER_ID
 name: clusage-menubar release
 
 on:
@@ -78,55 +75,23 @@ jobs:
         with:
           ref: ${{ needs.release-please.outputs.tag_name }}
 
-      - name: Import Developer ID certificate
-        env:
-          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
-          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
-          CODESIGN_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
-          NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
-          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
-          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
-        run: |
-          # Releases MUST be notarized — fail loudly if any secret is absent.
-          for VAR in MACOS_CERT_P12 MACOS_CERT_PASSWORD CODESIGN_IDENTITY NOTARY_KEY_P8 NOTARY_KEY_ID NOTARY_ISSUER_ID; do
-            [[ -n "${!VAR}" ]] || { echo "ERROR: secret ${VAR} is not set — see README 'Release procedure'" >&2; exit 1; }
-          done
-          KEYCHAIN="$RUNNER_TEMP/clusage-signing.keychain-db"
-          KEYCHAIN_PW="$(uuidgen)"
-          security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN"
-          security unlock-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
-          echo "$MACOS_CERT_P12" | base64 -d > "$RUNNER_TEMP/cert.p12"
-          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
-          rm -f "$RUNNER_TEMP/cert.p12"
-          # Allow codesign to use the key non-interactively (no UI on headless runners)
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PW" "$KEYCHAIN" >/dev/null
-          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
-          printf '%s' "$NOTARY_KEY_P8" > "$RUNNER_TEMP/AuthKey.p8"
-
       - name: Build universal app bundle
-        env:
-          CODESIGN_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
         run: ./build.sh
 
-      - name: Create DMG (signed + notarized)
+      - name: Create DMG (ad-hoc)
         env:
           SKIP_DMG_LAYOUT: "1"   # no Finder session on headless runners
-          CODESIGN_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
-          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
-          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
-        run: NOTARY_KEY_FILE="$RUNNER_TEMP/AuthKey.p8" ./create_dmg.sh
+        run: ./create_dmg.sh
 
-      - name: Upload DMG and publish release
+      - name: Create tarball (consumed by install.sh — curl/tar carries no quarantine xattr)
+        run: tar -czf "ClusageMenubar-${{ needs.release-please.outputs.version }}.tar.gz" -C build ClusageMenubar.app
+
+      - name: Upload artifacts and publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release upload "${{ needs.release-please.outputs.tag_name }}" \
-            "ClusageMenubar-${{ needs.release-please.outputs.version }}.dmg"
+            "ClusageMenubar-${{ needs.release-please.outputs.version }}.dmg" \
+            "ClusageMenubar-${{ needs.release-please.outputs.version }}.tar.gz"
           gh release edit "${{ needs.release-please.outputs.tag_name }}" --draft=false
 
-      - name: Clean up signing keychain
-        if: always()
-        run: |
-          security delete-keychain "$RUNNER_TEMP/clusage-signing.keychain-db" 2>/dev/null || true
-          rm -f "$RUNNER_TEMP/AuthKey.p8"
