@@ -5,6 +5,14 @@ All notable changes to clusage-menubar.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0](https://github.com/mlg87/lcj/compare/clusage-menubar-v0.4.0...clusage-menubar-v0.5.0) (2026-07-11)
+
+
+### Features
+
+* **clusage-menubar:** two-column menu bar grid layout ([d4e1553](https://github.com/mlg87/lcj/commit/d4e155320bbf5c4d722981c212347a5143e27fe7))
+* **clusage-menubar:** two-column menu bar grid layout ([1959f88](https://github.com/mlg87/lcj/commit/1959f88b2f087e344832115be730afaaee2f3cfc))
+
 ## [0.4.0](https://github.com/mlg87/lcj/compare/clusage-menubar-v0.3.1...clusage-menubar-v0.4.0) (2026-07-11)
 
 
