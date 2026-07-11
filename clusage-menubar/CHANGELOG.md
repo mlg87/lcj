@@ -5,6 +5,14 @@ All notable changes to clusage-menubar.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0](https://github.com/mlg87/lcj/compare/clusage-menubar-v0.3.1...clusage-menubar-v0.4.0) (2026-07-11)
+
+
+### Features
+
+* **clusage-menubar:** stack menu bar gauges vertically ([c87df3c](https://github.com/mlg87/lcj/commit/c87df3c9258dae51310eb86f8c052c05a7171591))
+* **clusage-menubar:** stack menu bar gauges vertically (Mockup D) ([15a138e](https://github.com/mlg87/lcj/commit/15a138e94b1edc713d3eff9eda529451fb4cf1ad))
+
 ## [0.3.1](https://github.com/mlg87/lcj/compare/clusage-menubar-v0.3.0...clusage-menubar-v0.3.1) (2026-07-11)
 
 
