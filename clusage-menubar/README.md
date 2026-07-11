@@ -1,19 +1,18 @@
 # Clusage — Claude usage in your macOS menu bar
 
-A Stats-style macOS menu bar app showing your Claude Code usage as three stacked
-segments with mini progress bars, authenticated by your claude.ai session cookie —
+A Stats-style macOS menu bar app showing your Claude Code usage as a 2×2 grid
+of mini progress bars, authenticated by your claude.ai session cookie —
 paste it once, no keychain access, no API key setup.
 
 ```
-┌──────────────────────────┐
-│  5H ███░░░░  9%  │       │
-│   F █░░░░░░  5%  │ 9:00  │
-│  WK ████░░░ 12%  │       │
-└──────────────────────────┘
+┌──────────────────────────────────────────┐
+│  5H ████░░░ 33%  │  WK ███░░░░ 23%      │
+│  RESETS 00:59    │   F ██░░░░░ 20%      │
+└──────────────────────────────────────────┘
 ```
 
-**Rows (top → bottom):** 5-hour session · Fable weekly · Weekly (all models)  
-**Right side:** 5-hour window reset time (12 or 24h, follows your system setting)  
+**Left column:** 5-hour session gauge (top) · reset countdown (bottom)  
+**Right column:** Weekly all-models gauge (top) · Fable/model weekly gauge (bottom)  
 **Colors:** green <70% · yellow 70–89% · red ≥90%
 
 ---
