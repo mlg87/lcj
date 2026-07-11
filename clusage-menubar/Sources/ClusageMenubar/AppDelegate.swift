@@ -22,6 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - applicationDidFinishLaunching
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        setupMainMenu()
         setupStatusItem()
         setupFetcher()
         setupRefreshTimer()
@@ -37,7 +38,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    // MARK: - Status item setup
+    // MARK: - Main menu
+
+    private func setupMainMenu() {
+        // WHY: LSUIElement apps have no main menu by default. Without one, key
+        // equivalents like ⌘V have no NSMenuItem to route through, so paste is
+        // silently swallowed even when an NSTextField has keyboard focus.
+        // A minimal Edit menu with the standard text actions fixes this.
+        let mainMenu = NSMenu()
+
+        // macOS requires a first item whose submenu is the application menu.
+        let appItem = NSMenuItem()
+        appItem.submenu = NSMenu()
+        mainMenu.addItem(appItem)
+
+        let editItem = NSMenuItem()
+        let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(NSMenuItem(title: "Cut",        action: #selector(NSText.cut(_:)),       keyEquivalent: "x"))
+        editMenu.addItem(NSMenuItem(title: "Copy",       action: #selector(NSText.copy(_:)),      keyEquivalent: "c"))
+        editMenu.addItem(NSMenuItem(title: "Paste",      action: #selector(NSText.paste(_:)),     keyEquivalent: "v"))
+        editMenu.addItem(NSMenuItem(title: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
+        editItem.submenu = editMenu
+        mainMenu.addItem(editItem)
+
+        NSApp.mainMenu = mainMenu
+    }
 
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -239,7 +264,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         alert.addButton(withTitle: "Save")                           // .alertFirstButtonReturn
         alert.addButton(withTitle: "Open claude.ai/settings/usage") // .alertSecondButtonReturn
         alert.addButton(withTitle: "Cancel")                        // .alertThirdButtonReturn
-        alert.window.initialFirstResponder = field
+        // WHY layout() + makeFirstResponder: initialFirstResponder alone is not enough
+        // for NSAlert accessoryViews in LSUIElement apps — AppKit won't focus the field
+        // until the window is laid out, so ⌘V paste is swallowed. layout() finalises
+        // the view hierarchy; makeFirstResponder() then gives the field keyboard focus.
+        alert.layout()
+        alert.window.makeFirstResponder(field)
 
         switch alert.runModal() {
         case .alertFirstButtonReturn:
