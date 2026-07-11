@@ -5,6 +5,14 @@ All notable changes to clusage-menubar.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0](https://github.com/mlg87/lcj/compare/clusage-menubar-v0.2.0...clusage-menubar-v0.3.0) (2026-07-11)
+
+
+### Features
+
+* **clusage-menubar:** distribute via install script + ad-hoc signing, dropping Apple Developer Program requirement ([0ca914f](https://github.com/mlg87/lcj/commit/0ca914ff7c145436aad15839fc4f54d20bf56510))
+* **clusage-menubar:** distribute via install script + ad-hoc signing, dropping the Apple Developer Program requirement ([b7c243d](https://github.com/mlg87/lcj/commit/b7c243ddd26e4d4481ed3c143a80a8d5f1d72c69))
+
 ## [0.2.0](https://github.com/mlg87/lcj/compare/clusage-menubar-v0.1.2...clusage-menubar-v0.2.0) (2026-07-11)
 
 
