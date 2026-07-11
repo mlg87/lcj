@@ -1,19 +1,18 @@
-# Auto-release clusage-menubar.
+# clusage-menubar CI + automated releases.
 #
 # HOW A RELEASE HAPPENS (humans & agents — see also AGENTS.md "Releasing"):
-#   1. A PR bumps clusage-menubar/VERSION and adds a matching "## vX.Y.Z"
-#      section to clusage-menubar/CHANGELOG.md (notes are taken verbatim).
-#   2. The PR merges to main.
-#   3. This workflow sees the push, runs `make check`, notices the tag
-#      clusage-menubar-v<VERSION> doesn't exist, builds the universal binary,
-#      creates the DMG, and publishes the tag + GitHub release.
-# Merges that don't bump VERSION run CI checks and skip publishing.
+#   1. PRs merge to main with conventional-commit messages (feat:/fix:/…)
+#      touching clusage-menubar/**. No manual version bumps.
+#   2. release-please maintains a rolling release PR that accumulates those
+#      commits, bumping clusage-menubar/version.txt + CHANGELOG.md.
+#   3. Merging that release PR: release-please creates the tag
+#      clusage-menubar-v<version> + a DRAFT GitHub release, then build-dmg
+#      builds the signed+notarized DMG, uploads it, and publishes.
 # NEVER create clusage-menubar-v* tags or releases manually — CI owns them.
 #
-# Trigger includes this file itself so a broken workflow can be fixed and the
-# release retried without a dummy bump. Tags/releases are created via the
-# Releases API (gh release create --target), which never touches the main
-# branch or its protection rules.
+# Required repo secrets (build-dmg fails loudly without them):
+#   MACOS_CERT_P12, MACOS_CERT_PASSWORD, CODESIGN_IDENTITY,
+#   NOTARY_KEY_P8, NOTARY_KEY_ID, NOTARY_ISSUER_ID
 name: clusage-menubar release
 
 on:
@@ -22,16 +21,19 @@ on:
     paths:
       - 'clusage-menubar/**'
       - '.github/workflows/clusage-menubar-release.yml'
+      - 'release-please-config.json'
+      - '.release-please-manifest.json'
 
 permissions:
-  contents: write   # create tag + release via the Releases API
+  contents: write        # tags + releases
+  pull-requests: write   # release-please's release PR
 
 concurrency:
   group: clusage-menubar-release
   cancel-in-progress: false   # queue racing merges; never abort a half-published release
 
 jobs:
-  release:
+  check:
     # macos-15: default Xcode 16.x = Swift 6 toolchain (Package.swift needs
     # swift-tools-version 6.0). macos-14's default Xcode 15.x is Swift 5.10 — too old.
     runs-on: macos-15
@@ -52,50 +54,79 @@ jobs:
       - name: Check (build + tests + shellcheck)
         run: make check
 
-      - name: Release gate
-        id: gate
-        run: |
-          VERSION="$(cat VERSION)"
-          TAG="clusage-menubar-v${VERSION}"
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null; then
-            echo "release=false" >> "$GITHUB_OUTPUT"
-            echo "Tag ${TAG} already exists — CI checks only, no release."
-          else
-            echo "release=true" >> "$GITHUB_OUTPUT"
-            echo "Tag ${TAG} is new — publishing a release."
-          fi
+  release-please:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      release_created: ${{ steps.rp.outputs['clusage-menubar--release_created'] }}
+      tag_name: ${{ steps.rp.outputs['clusage-menubar--tag_name'] }}
+      version: ${{ steps.rp.outputs['clusage-menubar--version'] }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: rp
 
-      - name: Extract release notes
-        if: steps.gate.outputs.release == 'true'
+  build-dmg:
+    needs: [check, release-please]
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: macos-15
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: clusage-menubar
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+
+      - name: Import Developer ID certificate
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          CODESIGN_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
+          NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
         run: |
-          VERSION="${{ steps.gate.outputs.version }}"
-          awk "/^## v${VERSION}\$/{found=1; next} found && /^## v/{exit} found{print}" CHANGELOG.md > "$RUNNER_TEMP/notes.md"
-          if ! [[ -s "$RUNNER_TEMP/notes.md" ]]; then
-            echo "ERROR: no '## v${VERSION}' section in CHANGELOG.md — add release notes before bumping VERSION" >&2
-            exit 1
-          fi
+          # Releases MUST be notarized — fail loudly if any secret is absent.
+          for VAR in MACOS_CERT_P12 MACOS_CERT_PASSWORD CODESIGN_IDENTITY NOTARY_KEY_P8 NOTARY_KEY_ID NOTARY_ISSUER_ID; do
+            [[ -n "${!VAR}" ]] || { echo "ERROR: secret ${VAR} is not set — see README 'Release procedure'" >&2; exit 1; }
+          done
+          KEYCHAIN="$RUNNER_TEMP/clusage-signing.keychain-db"
+          KEYCHAIN_PW="$(uuidgen)"
+          security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          echo "$MACOS_CERT_P12" | base64 -d > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/cert.p12"
+          # Allow codesign to use the key non-interactively (no UI on headless runners)
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PW" "$KEYCHAIN" >/dev/null
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+          printf '%s' "$NOTARY_KEY_P8" > "$RUNNER_TEMP/AuthKey.p8"
 
       - name: Build universal app bundle
-        if: steps.gate.outputs.release == 'true'
+        env:
+          CODESIGN_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
         run: ./build.sh
 
-      - name: Create DMG
-        if: steps.gate.outputs.release == 'true'
+      - name: Create DMG (signed + notarized)
         env:
           SKIP_DMG_LAYOUT: "1"   # no Finder session on headless runners
-        run: ./create_dmg.sh
+          CODESIGN_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+        run: NOTARY_KEY_FILE="$RUNNER_TEMP/AuthKey.p8" ./create_dmg.sh
 
-      - name: Publish GitHub release
-        if: steps.gate.outputs.release == 'true'
+      - name: Upload DMG and publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # --target creates tag + release in one API call, so a partially
-          # failed run is safely re-runnable (gate still sees no tag).
-          gh release create "${{ steps.gate.outputs.tag }}" \
-            "ClusageMenubar-${{ steps.gate.outputs.version }}.dmg" \
-            --target "$GITHUB_SHA" \
-            --title "clusage-menubar v${{ steps.gate.outputs.version }}" \
-            --notes-file "$RUNNER_TEMP/notes.md"
+          gh release upload "${{ needs.release-please.outputs.tag_name }}" \
+            "ClusageMenubar-${{ needs.release-please.outputs.version }}.dmg"
+          gh release edit "${{ needs.release-please.outputs.tag_name }}" --draft=false
+
+      - name: Clean up signing keychain
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/clusage-signing.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/AuthKey.p8"

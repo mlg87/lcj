@@ -29,8 +29,11 @@ paste it once, no keychain access, no API key setup.
    Paste and Save.
 4. The usage bars appear within a few seconds.
 
-> **Gatekeeper note:** The DMG is ad-hoc signed. If macOS blocks it, right-click
-> the app in Finder → Open → Open (first launch only).
+> **Gatekeeper:** Releases v0.1.3+ are Developer ID–signed and notarized by Apple —
+> they open with no warnings. For older releases macOS blocks the app: go to
+> System Settings → Privacy & Security → scroll to the block message → **Open Anyway**
+> (macOS 15 removed the right-click → Open bypass), or run
+> `xattr -d com.apple.quarantine /Applications/ClusageMenubar.app`.
 
 ### Build from source
 
@@ -85,7 +88,10 @@ make dmg      # app + ./create_dmg.sh — DMG in clusage-menubar/
 |---|---|---|
 | `ARCHS` | `arm64 x86_64` | Architectures to build. Set to `arm64` if x86_64 CLT build fails. |
 | `CODESIGN_IDENTITY` | `-` (ad-hoc) | Set to your Developer ID for distribution signing. |
-| `NOTARY_PROFILE` | *(unset)* | `notarytool` credential profile; DMG is notarized only when both this and `CODESIGN_IDENTITY` are set. |
+| `NOTARY_PROFILE` | *(unset)* | Local dev: `notarytool` credential profile; DMG is notarized only when both this and `CODESIGN_IDENTITY` are set. |
+| `NOTARY_KEY_FILE` | *(unset)* | CI: path to App Store Connect API key (.p8 file). App Store Connect API-key alternative to `NOTARY_PROFILE` (all three required; used by CI). |
+| `NOTARY_KEY_ID` | *(unset)* | CI: App Store Connect API key ID (all three required; used by CI). |
+| `NOTARY_ISSUER_ID` | *(unset)* | CI: App Store Connect Issuer ID (all three required; used by CI). |
 | `SKIP_DMG_LAYOUT` | *(unset)* | Set to any value to skip the Finder AppleScript icon-layout step (used on headless CI). |
 | `CLUSAGE_COOKIE` | *(unset)* | Overrides the stored session cookie at runtime (tests/CI). |
 
@@ -93,13 +99,21 @@ make dmg      # app + ./create_dmg.sh — DMG in clusage-menubar/
 
 ## Release procedure
 
-Releases are fully automated by [`.github/workflows/clusage-menubar-release.yml`](../.github/workflows/clusage-menubar-release.yml). Never create `clusage-menubar-v*` tags or releases manually — CI owns them.
+Releases are fully automated by [release-please](https://github.com/googleapis/release-please)
++ [`clusage-menubar-release.yml`](../.github/workflows/clusage-menubar-release.yml).
+Never create `clusage-menubar-v*` tags/releases or edit `version.txt` by hand — CI owns them.
 
-1. Bump `VERSION` (e.g. `echo "0.2.0" > VERSION`).
-2. Add a `## v0.2.0` section to `CHANGELOG.md` — the release notes come from it verbatim; the workflow fails loudly without it.
-3. Open a PR with both changes, get it merged to `main`.
+1. Merge PRs whose commits follow [Conventional Commits](https://www.conventionalcommits.org/)
+   (`fix:` → patch, `feat:` → minor, `feat!:`/`BREAKING CHANGE:` → major) touching `clusage-menubar/**`.
+2. release-please maintains a release PR ("chore(main): release clusage-menubar X.Y.Z")
+   that accumulates merged changes, bumping `version.txt` and `CHANGELOG.md`.
+3. Merge that release PR when you want to ship. CI tags `clusage-menubar-vX.Y.Z`, builds the
+   Developer ID–signed + notarized DMG, uploads it, and publishes the release.
 
-On merge, the workflow runs `make check` and — because tag `clusage-menubar-v0.2.0` doesn't exist yet — builds the universal binary, creates the DMG, and publishes the tag + GitHub release. Merges that don't bump `VERSION` run CI checks only.
+Release builds require the repo secrets `MACOS_CERT_P12`, `MACOS_CERT_PASSWORD`,
+`CODESIGN_IDENTITY`, `NOTARY_KEY_P8`, `NOTARY_KEY_ID`, `NOTARY_ISSUER_ID`. The build job
+fails loudly if any is missing; the release stays a draft until the DMG uploads — add the
+secret and re-run the failed job.
 ---
 
 ## Troubleshooting

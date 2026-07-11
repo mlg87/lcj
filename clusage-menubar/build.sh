@@ -16,7 +16,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VERSION="$(cat VERSION)"
+VERSION="$(cat version.txt)"
 APP_NAME="ClusageMenubar"
 APP_DIR="build/${APP_NAME}.app"
 CONTENTS="${APP_DIR}/Contents"
@@ -81,7 +81,7 @@ find "$APP_DIR" -name ".DS_Store" -delete 2>/dev/null || true
 # -- Code sign --
 if [[ "$CODESIGN_IDENTITY" != "-" ]]; then
     # Hardened runtime only makes sense with a real identity (required for notarization).
-    codesign --force --deep --sign "$CODESIGN_IDENTITY" --options runtime "$APP_DIR"
+    codesign --force --deep --sign "$CODESIGN_IDENTITY" --options runtime --timestamp "$APP_DIR"
 else
     codesign --force --deep --sign "$CODESIGN_IDENTITY" "$APP_DIR"
 fi
