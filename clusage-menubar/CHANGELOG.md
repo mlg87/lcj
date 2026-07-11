@@ -5,6 +5,11 @@ All notable changes to clusage-menubar.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v0.1.2
+
+### Changed
+- New app icon: embroidered-patch "lcj/cm" artwork masked to the Apple-standard squircle (824×824 rounded-rect, radius 185.4, transparent margins on the 1024 canvas).
+
 ## v0.1.1
 
 ### Changed
