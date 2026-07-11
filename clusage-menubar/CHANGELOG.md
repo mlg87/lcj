@@ -5,6 +5,13 @@ All notable changes to clusage-menubar.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1](https://github.com/mlg87/lcj/compare/clusage-menubar-v0.3.0...clusage-menubar-v0.3.1) (2026-07-11)
+
+
+### Bug Fixes
+
+* **clusage-menubar:** make cookie field focusable for paste in Set Session Cookie dialog ([603c8ba](https://github.com/mlg87/lcj/commit/603c8ba4cf27b42426a10907aaa8a189b1110b33))
+
 ## [0.3.0](https://github.com/mlg87/lcj/compare/clusage-menubar-v0.2.0...clusage-menubar-v0.3.0) (2026-07-11)
 
 
