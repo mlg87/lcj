@@ -1,8 +1,8 @@
 # Clusage — Claude usage in your macOS menu bar
 
 A Stats-style macOS menu bar app showing your Claude Code usage as three compact
-segments with mini progress bars, powered by the same local OAuth token Claude Code
-already holds — no cookie pasting, no API key setup.
+segments with mini progress bars, authenticated by your claude.ai session cookie —
+paste it once, no keychain access, no API key setup.
 
 ```
 ┌──────────────────────────────────────────────┐
@@ -24,9 +24,10 @@ already holds — no cookie pasting, no API key setup.
 
 1. Download `ClusageMenubar-X.Y.Z.dmg` from [Releases](../../releases).
 2. Open the DMG, drag **ClusageMenubar** to Applications.
-3. Launch it. macOS will prompt: **"ClusageMenubar" wants to use data from other apps.**
-   Click **Always Allow** — this grants access to the Claude Code credentials in your Keychain (one-time, survives restarts).
-4. The usage bars appear in your menu bar within a few seconds.
+3. Launch it. A dialog explains how to copy your session cookie from claude.ai
+   (Settings → Usage → DevTools → Network → `usage` request → `Cookie` request header).
+   Paste and Save.
+4. The usage bars appear within a few seconds.
 
 > **Gatekeeper note:** The DMG is ad-hoc signed. If macOS blocks it, right-click
 > the app in Finder → Open → Open (first launch only).
@@ -47,27 +48,23 @@ make app          # builds build/ClusageMenubar.app (no DMG)
 
 ## How auth works
 
-Clusage resolves your Claude Code OAuth token from three places, in order:
+Clusage uses your **pasted claude.ai session cookie** — no Keychain access, no API key.
 
-1. **`CLAUDE_CODE_OAUTH_TOKEN` environment variable** — set this for CI/testing.
-2. **`~/.claude/.credentials.json`** — Claude Code's credentials file (if present).
-3. **macOS Keychain** — service `Claude Code-credentials`, account matching your
-   username. Two items may share this service (one for MCP OAuth, one for the Claude AI
-   OAuth token); Clusage enumerates all items and picks the one with a valid
-   `claudeAiOauth.accessToken`.
+Resolution order:
+1. **`CLUSAGE_COOKIE` environment variable** — overrides the stored value (tests/CI).
+2. **UserDefaults** — stored in the `com.mlg87.clusage-menubar` preferences domain under
+   key `session_cookie` after your first paste.
 
-The token is **never logged, never persisted by Clusage, and never returned on a failure
-path.** Every failure mode degrades to "usage unavailable" — nothing crashes.
+The cookie is stored **unencrypted** in the app's preferences plist — the same trust
+level as the browser profile it was copied from. It is never logged and never sent
+anywhere but `claude.ai`.
 
 ### Compliance / gray-area disclaimer
 
-The usage data comes from `GET https://api.anthropic.com/api/oauth/usage` — the same
-endpoint Claude Code's own `/usage` screen uses. This is an **undocumented, internal
+The usage data comes from `GET https://claude.ai/api/organizations/<orgId>/usage` — the
+same internal API the claude.ai usage page calls. This is an **undocumented, internal
 endpoint** and may change or disappear without notice. Clusage degrades gracefully
 (shows "–" bars) whenever it becomes unavailable. Use is at your own discretion.
-
-The `User-Agent: claude-code/<version>` header is required; without it the request
-is routed to a throttled bucket that returns persistent 429s.
 
 ---
 
@@ -82,7 +79,7 @@ make app      # ./build.sh — release app bundle in build/
 make dmg      # app + ./create_dmg.sh — DMG in clusage-menubar/
 ```
 
-### Build env vars
+### Env vars
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -90,6 +87,7 @@ make dmg      # app + ./create_dmg.sh — DMG in clusage-menubar/
 | `CODESIGN_IDENTITY` | `-` (ad-hoc) | Set to your Developer ID for distribution signing. |
 | `NOTARY_PROFILE` | *(unset)* | `notarytool` credential profile; DMG is notarized only when both this and `CODESIGN_IDENTITY` are set. |
 | `SKIP_DMG_LAYOUT` | *(unset)* | Set to any value to skip the Finder AppleScript icon-layout step (used on headless CI). |
+| `CLUSAGE_COOKIE` | *(unset)* | Overrides the stored session cookie at runtime (tests/CI). |
 
 ---
 
@@ -106,14 +104,13 @@ On merge, the workflow runs `make check` and — because tag `clusage-menubar-v0
 
 ## Troubleshooting
 
-**"Usage unavailable: No Claude Code token found"** — run `claude` in your terminal
-and sign in. Clusage polls every 5 min and will pick up the new token automatically.
+**No session cookie set** — use **Set Session Cookie…** in the menu bar dropdown.
+Follow the in-app instructions to copy the `Cookie` header from DevTools on
+claude.ai/settings/usage and paste it into the dialog.
 
-**"Token rejected"** — your token expired. Run `claude` to refresh.
-
-**Menu bar shows "–" after the first launch** — click **Always Allow** on the Keychain
-prompt. If you missed it, go to Keychain Access, find `Claude Code-credentials`, and
-grant access to Clusage.
+**Cookie rejected or expired** — your session has expired. Log in to claude.ai again,
+then copy a fresh cookie via the same DevTools steps and paste it with
+**Set Session Cookie…**.
 
 **Launch at Login doesn't work** — `SMAppService` requires the app to be in a stable
 location (e.g. `/Applications`). It won't work when run via `swift run` or directly

@@ -1,4 +1,4 @@
-/// UsageSnapshot.swift — model + JSON parsing for the Anthropic OAuth usage endpoint.
+/// UsageSnapshot.swift — model + JSON parsing for the claude.ai org-usage endpoint.
 ///
 /// WHY pure functions only (no networking here): ClusageCore is a Foundation-only
 /// library target so it can be used by both the app and the test runner without
@@ -24,7 +24,7 @@ public struct Bucket: Equatable, Sendable {
     }
 }
 
-/// Three usage buckets parsed from GET /api/oauth/usage.
+/// Three usage buckets parsed from GET /api/organizations/{orgId}/usage.
 public struct UsageSnapshot: Equatable, Sendable {
     /// limits[kind=="session"] or five_hour fallback.
     public let session: Bucket?
