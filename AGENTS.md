@@ -17,11 +17,13 @@ install and development. Read it before working in that directory.
 | `clusage-menubar/` | macOS menu bar Claude usage app (Swift 6, AppKit) | `make -C clusage-menubar check` |
 
 ## Releasing clusage-menubar (fully automated — never release manually)
-- NEVER create `clusage-menubar-v*` tags or GitHub releases by hand; CI owns them.
-- To ship: one PR that bumps `clusage-menubar/VERSION` AND adds a matching
-  `## vX.Y.Z` section to `clusage-menubar/CHANGELOG.md` (release notes are taken
-  from it verbatim; the workflow fails loudly if the section is missing). Merge to `main`.
-- `.github/workflows/clusage-menubar-release.yml` runs on every push to `main`
-  touching `clusage-menubar/**`: always runs `make check`; publishes tag + DMG
-  release only when the `VERSION` tag doesn't exist yet. No bump ⇒ CI checks only.
-- Signing is ad-hoc unless `CODESIGN_IDENTITY` is configured.
+- NEVER create `clusage-menubar-v*` tags or GitHub releases by hand, and NEVER edit
+  `clusage-menubar/version.txt` or its CHANGELOG version sections manually —
+  release-please + CI own them.
+- To ship: merge PRs with conventional-commit messages (`fix:`/`feat:`/…) touching
+  `clusage-menubar/**`, then merge the auto-maintained release PR
+  ("chore(main): release clusage-menubar X.Y.Z"). CI tags, builds a Developer ID–signed
+  + notarized DMG, uploads it, and publishes the release (draft until the DMG is attached).
+- `.github/workflows/clusage-menubar-release.yml` runs on every push to `main` touching
+  `clusage-menubar/**`: always runs `make check`; the DMG job runs only when release-please
+  cut a new tag. Signing needs the six `MACOS_*`/`NOTARY_*`/`CODESIGN_IDENTITY` repo secrets.
