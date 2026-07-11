@@ -5,6 +5,12 @@ All notable changes to clusage-menubar.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v0.1.1
+
+### Changed
+- Auth via pasted claude.ai session cookie (ClaudeUsageBar-style): paste once from DevTools, stored in app preferences (`com.mlg87.clusage-menubar`, key `session_cookie`), `CLUSAGE_COOKIE` env override. No keychain access, no prompts.
+- Removed all Keychain / credentials-file / OAuth-token auth paths (keychain ACL binds to the ad-hoc signature — re-prompts on every rebuild; unusable for end-users).
+
 ## v0.1.0
 
 Initial release.
