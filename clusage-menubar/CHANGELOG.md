@@ -5,6 +5,21 @@ All notable changes to clusage-menubar.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0](https://github.com/mlg87/lcj/compare/clusage-menubar-v0.6.0...clusage-menubar-v0.7.0) (2026-09-14)
+
+
+### Features
+
+* **clusage-menubar:** add Codex usage column ([d2ec6e8](https://github.com/mlg87/lcj/commit/d2ec6e8964c807053dee6c459c96e1830f866513))
+* **clusage-menubar:** add Codex usage column + Remaining Capacity layout ([59c1e7f](https://github.com/mlg87/lcj/commit/59c1e7f1b9a0864d3b13c49772f6ad4182a70573))
+* **clusage-menubar:** add Remaining Capacity menu bar layout ([8be8589](https://github.com/mlg87/lcj/commit/8be8589e80c3dc45ddd7a82ef2a1b19fe950ca9a))
+* **clusage-menubar:** toggle Claude and Codex independently ([e290707](https://github.com/mlg87/lcj/commit/e2907073734276d88c13d5cc3f61013e1c20c4a8))
+
+
+### Bug Fixes
+
+* **clusage-menubar:** address review on [#40](https://github.com/mlg87/lcj/issues/40) ([f10f2da](https://github.com/mlg87/lcj/commit/f10f2da212b30af49d5e7376a3f44198b7b20b59))
+
 ## [0.6.0](https://github.com/mlg87/lcj/compare/clusage-menubar-v0.5.0...clusage-menubar-v0.6.0) (2026-07-29)
 
 
