@@ -230,6 +230,405 @@ func testRefreshIntervalNormalize() {
     expectEqual(RefreshInterval.defaultMinutes, 5, "default stays the historical 5-min cadence")
 }
 
+// MARK: - Tests: Codex session-log parsing
+
+/// Real `token_count` line captured 2026-08-26 from ~/.codex/sessions.
+let codexTokenCountLine = """
+{"timestamp":"2026-08-26T19:34:25.107Z","ordinal":23,"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":65477,"cached_input_tokens":46592,"cache_write_input_tokens":0,"output_tokens":317,"reasoning_output_tokens":64,"total_tokens":65794},"last_token_usage":{"input_tokens":33183,"cached_input_tokens":31488,"cache_write_input_tokens":0,"output_tokens":118,"reasoning_output_tokens":18,"total_tokens":33301},"model_context_window":258400},"rate_limits":{"limit_id":"codex","primary":null,"secondary":null}}}
+"""
+
+func testParseCodexTokenCountLine() {
+    guard let turn = parseCodexTokenCountLine(codexTokenCountLine) else {
+        expect(false, "codex: real token_count line should parse")
+        return
+    }
+    expectEqual(turn.inputTokens, 33183, "codex: input from last_token_usage (per-turn delta, not cumulative)")
+    expectEqual(turn.cachedInputTokens, 31488, "codex: cached input")
+    expectEqual(turn.outputTokens, 118, "codex: output")
+    expectEqual(turn.totalTokens, 33301, "codex: total")
+    var utc = Calendar(identifier: .gregorian)
+    utc.timeZone = TimeZone(identifier: "UTC")!
+    expectEqual(utc.component(.hour, from: turn.timestamp), 19, "codex: timestamp parsed with fractional seconds")
+
+    expect(parseCodexTokenCountLine("{\"type\":\"session_meta\",\"payload\":{}}") == nil,
+           "codex: non-token_count line returns nil")
+    expect(parseCodexTokenCountLine("{not json") == nil, "codex: malformed JSON returns nil")
+    expect(parseCodexTokenCountLine(
+        "{\"timestamp\":\"2026-08-26T19:34:25.107Z\",\"payload\":{\"type\":\"token_count\",\"info\":null}}") == nil,
+           "codex: token_count with null info returns nil")
+
+    let noFraction = """
+    {"timestamp":"2026-08-26T19:34:25Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":10,"cached_input_tokens":0,"output_tokens":5,"total_tokens":15}}}}
+    """
+    expectEqual(parseCodexTokenCountLine(noFraction)?.totalTokens, 15,
+                "codex: timestamp without fractional seconds still parses")
+}
+
+func testParseCodexModelAndLimitLines() {
+    let turnContextLine = """
+    {"timestamp":"2026-08-26T19:50:02.480Z","type":"turn_context","payload":{"turn_id":"x","cwd":"/tmp","model":"gpt-5.6-luna","approval_policy":"never"}}
+    """
+    expectEqual(parseCodexModelLine(turnContextLine), "gpt-5.6-luna", "codex: model from turn_context")
+    expect(parseCodexModelLine(codexTokenCountLine) == nil, "codex: token_count line yields no model")
+
+    let sessionMetaLine = """
+    {"timestamp":"2026-08-26T09:26:33.000Z","type":"session_meta","payload":{"session_id":"x","base_instructions":{"text":"...","provenance":{"model":"gpt-5.6-luna"}}}}
+    """
+    expectEqual(parseCodexModelLine(sessionMetaLine), "gpt-5.6-luna",
+                "codex: model from session_meta base_instructions.provenance (ambient sessions)")
+
+    let healthy = """
+    {"timestamp":"2026-08-26T19:34:25.107Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"total_tokens":1}},"rate_limits":{"limit_id":"codex","primary":null,"secondary":null,"credits":{"has_credits":true,"unlimited":false,"balance":null},"spend_control_reached":null,"plan_type":"business","rate_limit_reached_type":null}}}
+    """
+    if let limit = parseCodexLimitStatus(healthy) {
+        expectEqual(limit.planType, "business", "codex: plan type parsed")
+        expectEqual(limit.hasCredits, true, "codex: has_credits parsed")
+        expect(limit.creditBalance == nil, "codex: null balance stays nil")
+        expect(!limit.isLimited, "codex: healthy status is not limited")
+    } else {
+        expect(false, "codex: limit status parses from real-shaped rate_limits")
+    }
+
+    let limited = """
+    {"timestamp":"2026-08-26T19:34:25.107Z","type":"event_msg","payload":{"type":"token_count","rate_limits":{"credits":{"has_credits":false},"spend_control_reached":true,"rate_limit_reached_type":"credits_exhausted","primary":{"used_percent":97.6}}}}
+    """
+    if let status = parseCodexLimitStatus(limited) {
+        expect(status.isLimited, "codex: spend control / exhausted credits flag as limited")
+        expectEqual(status.primaryUsedPercent, 98, "codex: primary used_percent rounded")
+    } else {
+        expect(false, "codex: limited status parses")
+    }
+}
+
+// MARK: - Tests: Codex aggregation + pricing
+
+/// Fixed clock for the window tests: 2026-08-26 14:00 in America/Denver.
+func codexTestCalendar() -> (cal: Calendar, now: Date) {
+    var cal = Calendar(identifier: .gregorian)
+    cal.timeZone = TimeZone(identifier: "America/Denver")!
+    let now = cal.date(from: DateComponents(year: 2026, month: 8, day: 26, hour: 14))!
+    return (cal, now)
+}
+
+func testAggregateCodexUsage() {
+    let (cal, now) = codexTestCalendar()
+    func turn(daysAgo: Int, hour: Int, total: Int, output: Int) -> CodexTurn {
+        let day = cal.date(byAdding: .day, value: -daysAgo, to: cal.startOfDay(for: now))!
+        let ts = cal.date(byAdding: .hour, value: hour, to: day)!
+        return CodexTurn(timestamp: ts, inputTokens: total - output, cachedInputTokens: 0,
+                         outputTokens: output, totalTokens: total)
+    }
+
+    let sessions: [String: [CodexTurn]] = [
+        "a.jsonl": [turn(daysAgo: 0, hour: 9, total: 1000, output: 100),
+                    turn(daysAgo: 0, hour: 10, total: 2000, output: 200)],
+        "b.jsonl": [turn(daysAgo: 3, hour: 12, total: 5000, output: 500)],
+        "c.jsonl": [turn(daysAgo: 6, hour: 8, total: 700, output: 70)],    // oldest in-7d-window day
+        "d.jsonl": [turn(daysAgo: 7, hour: 8, total: 9999, output: 999)],  // outside 7d, inside 30d
+        "e.jsonl": [turn(daysAgo: 27, hour: 8, total: 111, output: 11)],   // Jul 30: inside 30d, before month start
+        "f.jsonl": [turn(daysAgo: 40, hour: 8, total: 5555, output: 55)],  // outside every window
+    ]
+
+    let summary = aggregateCodexUsage(turnsBySession: sessions, now: now, calendar: cal)
+    expectEqual(summary.todayTotal, 3000, "codex agg: today sums both turns of session a")
+    expectEqual(summary.todayOutput, 300, "codex agg: today output")
+    expectEqual(summary.last7DaysTotal, 8700, "codex agg: 7-day window includes day-6, excludes day-7")
+    expectEqual(summary.last7DaysOutput, 870, "codex agg: 7-day output")
+    expectEqual(summary.last30DaysTotal, 18810, "codex agg: 30-day window adds day-7 and day-27, excludes day-40")
+    // now = Aug 26 → month starts Aug 1: excludes day-27 (Jul 30) but includes day-7 (Aug 19).
+    expectEqual(summary.monthToDateTotal, 18699, "codex agg: month-to-date starts at calendar month start")
+    expectEqual(summary.sessionsToday, 1, "codex agg: only session a active today")
+    expectEqual(summary.lastActivity, sessions["a.jsonl"]![1].timestamp, "codex agg: lastActivity is newest turn")
+
+    let empty = aggregateCodexUsage(turnsBySession: [:], now: now, calendar: cal)
+    expectEqual(empty.todayTotal, 0, "codex agg: empty input → zero totals")
+    expect(empty.lastActivity == nil, "codex agg: empty input → nil lastActivity")
+}
+
+func testCodexPricing() {
+    let (cal, now) = codexTestCalendar()
+
+    // Assert the RESOLUTION contract against the table, not against literal
+    // prices: re-pinning constants here would break the suite on every
+    // legitimate price update without testing any behaviour.
+    expectEqual(codexPricing(forModel: "gpt-5.6-luna"), codexPricingTable["gpt-5.6-luna"]!,
+                "codex pricing: exact table hit")
+    expectEqual(codexPricing(forModel: "gpt-5.6-luna-2026-09-01"), codexPricingTable["gpt-5.6-luna"]!,
+                "codex pricing: prefix match on dated variant")
+    expectEqual(codexPricing(forModel: "codex-auto-review"), codexFallbackPricing, "codex pricing: unknown model → fallback")
+    expectEqual(codexPricing(forModel: nil), codexFallbackPricing, "codex pricing: nil model → fallback")
+
+    // Ambiguous prefix: this name matches BOTH "gpt-5.4-mini" and "gpt-5.4".
+    // Dictionary iteration order is randomized per process, so a first-match
+    // scan returned either one depending on the launch (a 3.3x price swing);
+    // longest-match-wins is deterministic by construction.
+    expectEqual(codexPricing(forModel: "gpt-5.4-mini-2026-08-01"), codexPricingTable["gpt-5.4-mini"]!,
+                "codex pricing: ambiguous prefix resolves to the longest match")
+    expectEqual(codexPricing(forModel: "gpt-5.4-2026-08-01"), codexPricingTable["gpt-5.4"]!,
+                "codex pricing: shorter prefix still resolves when it is the longest match")
+
+    // 1M uncached input + 1M cached + 1M output on luna: 0.20 + 0.02 + 1.20 = 1.42
+    let lunaTurn = CodexTurn(timestamp: now, inputTokens: 2_000_000, cachedInputTokens: 1_000_000,
+                             outputTokens: 1_000_000, totalTokens: 3_000_000, model: "gpt-5.6-luna")
+    expect(abs(costOfCodexTurn(lunaTurn) - 1.42) < 0.0001, "codex cost: luna uncached/cached/output split")
+
+    let solTurn = CodexTurn(timestamp: now, inputTokens: 500_000, cachedInputTokens: 0,
+                            outputTokens: 100_000, totalTokens: 600_000, model: "gpt-5.6-sol")
+    expect(abs(costOfCodexTurn(solTurn) - 4.0) < 0.0001, "codex cost: sol (0.5M×$4 + 0.1M×$20 = $4)")
+
+    let degenTurn = CodexTurn(timestamp: now, inputTokens: 0, cachedInputTokens: 0,
+                              outputTokens: 0, totalTokens: 1_000_000, model: "gpt-5.6-luna")
+    expect(abs(costOfCodexTurn(degenTurn) - 0.20) < 0.0001,
+           "codex cost: component-less total priced at input rate (ambient sessions)")
+
+    let costSummary = aggregateCodexUsage(turnsBySession: ["s.jsonl": [lunaTurn, solTurn]], now: now, calendar: cal)
+    expect(abs(costSummary.todayCost - 5.42) < 0.0001, "codex cost: aggregate today cost sums turns")
+    expectEqual(costSummary.perModel.count, 2, "codex cost: per-model breakdown has both models")
+    expectEqual(costSummary.perModel.first?.model, "gpt-5.6-sol", "codex cost: per-model sorted by cost desc")
+}
+
+func testBudgetBarometer() {
+    expectEqual(budgetBand(monthCost: 79, budget: 100), .ok, "budget: under budget → green")
+    expectEqual(budgetBand(monthCost: 100, budget: 100), .ok, "budget: at budget → green")
+    expectEqual(budgetBand(monthCost: 150, budget: 100), .warn, "budget: 1-2x budget → yellow")
+    expectEqual(budgetBand(monthCost: 201, budget: 100), .critical, "budget: over 2x budget → red")
+    expectEqual(budgetBand(monthCost: 999, budget: 0), .ok, "budget: zero budget never alarms")
+    expectEqual(budgetFillPercent(monthCost: 79, budget: 100), 79, "budget: fill percent = cost/budget")
+    expectEqual(budgetFillPercent(monthCost: 250, budget: 100), 100, "budget: fill capped at 100")
+}
+
+func testFormatCostAndTokens() {
+    expectEqual(formatCost(0), "$0.00", "formatCost: zero")
+    expectEqual(formatCost(3.456), "$3.46", "formatCost: under $10 two decimals")
+    expectEqual(formatCost(12.34), "$12.3", "formatCost: under $100 one decimal")
+    expectEqual(formatCost(123.4), "$123", "formatCost: over $100 whole dollars")
+
+    expectEqual(formatTokens(0), "0", "formatTokens: zero")
+    expectEqual(formatTokens(950), "950", "formatTokens: sub-thousand stays raw")
+    expectEqual(formatTokens(1_500), "1.5K", "formatTokens: thousands one decimal")
+    expectEqual(formatTokens(12_345), "12.3K", "formatTokens: tens of thousands")
+    expectEqual(formatTokens(123_456), "123K", "formatTokens: hundreds of thousands drop decimal")
+    expectEqual(formatTokens(3_456_789), "3.5M", "formatTokens: millions")
+    expectEqual(formatTokens(21_000_000), "21M", "formatTokens: trailing .0 dropped")
+    expectEqual(formatTokens(1_234_567_890), "1.2B", "formatTokens: billions")
+    // Pin the locale: a bare NumberFormatter follows Locale.current, so this
+    // would fail on a de_DE machine ("3.456.789") against a green patch.
+    expectEqual(formatTokensLong(3_456_789, locale: Locale(identifier: "en_US")), "3,456,789",
+                "formatTokensLong: grouped (en_US)")
+    expectEqual(formatTokensLong(3_456_789, locale: Locale(identifier: "de_DE")), "3.456.789",
+                "formatTokensLong: grouping follows the injected locale")
+}
+
+// MARK: - Tests: Codex plan usage (ChatGPT spend control)
+
+func testCodexPlanUsageParse() {
+    let whamBody = """
+    {"user_id":"user-x","plan_type":"business","rate_limit":null,
+     "credits":{"has_credits":true,"unlimited":false,"balance":null},
+     "spend_control":{"reached":false,"individual_limit":{
+       "source":"workspace_spend_controls",
+       "limit":"4300","used":"3604.349905371666","remaining":"695.650094628334",
+       "used_percent":84,"remaining_percent":16,
+       "reset_after_seconds":380033,"reset_at":1788220801}}}
+    """.data(using: .utf8)!
+    if let plan = CodexPlanUsage.parse(whamBody) {
+        expectEqual(plan.usedPercent, 84, "plan: used_percent parsed")
+        expect(abs(plan.limitCredits - 4300) < 0.001, "plan: string limit parsed to Double")
+        expect(abs(plan.usedCredits - 3604.3499) < 0.001, "plan: string used parsed")
+        expect(abs(plan.remainingCredits - 695.6501) < 0.001, "plan: string remaining parsed")
+        expectEqual(plan.resetsAt, Date(timeIntervalSince1970: 1788220801), "plan: reset_at epoch parsed")
+        expect(!plan.reached, "plan: reached false")
+    } else {
+        expect(false, "plan: real wham/usage body parses")
+    }
+
+    expect(CodexPlanUsage.parse("{\"plan_type\":\"business\",\"spend_control\":null}".data(using: .utf8)!) == nil,
+           "plan: null spend_control → nil (fall back to budget)")
+    expect(CodexPlanUsage.parse("{}".data(using: .utf8)!) == nil, "plan: empty body → nil")
+
+    let numericBody = """
+    {"spend_control":{"reached":true,"individual_limit":{"limit":100,"used":100}}}
+    """.data(using: .utf8)!
+    if let capped = CodexPlanUsage.parse(numericBody) {
+        expectEqual(capped.usedPercent, 100, "plan: percent derived when used_percent absent")
+        expect(capped.reached, "plan: reached true propagates")
+    } else {
+        expect(false, "plan: numeric credits also parse")
+    }
+}
+
+func testMenuBarShortDate() {
+    let (cal, _) = codexTestCalendar()
+    let resetDate = cal.date(from: DateComponents(year: 2026, month: 8, day: 31))!
+    expectEqual(menuBarShortDate(resetDate, locale: Locale(identifier: "en_US"), timeZone: cal.timeZone),
+                "8/31", "menuBarShortDate: en_US month/day")
+    expectEqual(menuBarShortDate(nil), "–", "menuBarShortDate: nil date dashes")
+}
+
+// MARK: - Tests: Remaining-capacity layout helpers
+
+func testMenuBarCountdown() {
+    let (_, now) = codexTestCalendar()
+    func inSecs(_ s: TimeInterval) -> Date { now.addingTimeInterval(s) }
+    expectEqual(menuBarCountdown(to: nil, from: now), "–", "countdown: nil → dash")
+    expectEqual(menuBarCountdown(to: inSecs(30), from: now), "<1m", "countdown: under a minute")
+    expectEqual(menuBarCountdown(to: inSecs(-100), from: now), "<1m", "countdown: past date clamps")
+    expectEqual(menuBarCountdown(to: inSecs(38 * 60), from: now), "38m", "countdown: minutes only")
+    expectEqual(menuBarCountdown(to: inSecs(2 * 3600 + 14 * 60), from: now), "2h14m", "countdown: hours + minutes")
+    expectEqual(menuBarCountdown(to: inSecs(3 * 3600), from: now), "3h", "countdown: whole hours drop minutes")
+    expectEqual(menuBarCountdown(to: inSecs(4 * 86400 + 9 * 3600 + 30 * 60), from: now), "4d9h",
+                "countdown: days + hours, minutes dropped")
+    expectEqual(menuBarCountdown(to: inSecs(5 * 86400 + 20 * 60), from: now), "5d", "countdown: whole days drop hours")
+}
+
+func testStartOfNextMonth() {
+    let (cal, now) = codexTestCalendar()   // 2026-08-26 14:00 Denver
+    let next = startOfNextMonth(after: now, calendar: cal)
+    expectEqual(next, cal.date(from: DateComponents(year: 2026, month: 9, day: 1)), "next month: Sep 1 local midnight")
+    let dec = cal.date(from: DateComponents(year: 2026, month: 12, day: 31, hour: 23))!
+    expectEqual(startOfNextMonth(after: dec, calendar: cal),
+                cal.date(from: DateComponents(year: 2027, month: 1, day: 1)), "next month: year rollover")
+}
+
+func testMenuBarStyleNormalize() {
+    expectEqual(MenuBarStyle.normalize(nil), .grid, "style: absent → grid (pre-existing layout)")
+    expectEqual(MenuBarStyle.normalize("bogus"), .grid, "style: unknown → grid")
+    expectEqual(MenuBarStyle.normalize("remaining"), .remaining, "style: remaining round-trips")
+    expectEqual(MenuBarStyle.defaultStyle, .grid, "style: default stays the historical grid")
+}
+
+// MARK: - Tests: provider visibility
+
+func testProviderVisibilityDefaults() {
+    expect(ProviderVisibility.both.isVisible(.claude) && ProviderVisibility.both.isVisible(.codex),
+           "visibility: .both shows both providers")
+    expectEqual(ProviderVisibility.normalize(claude: true, codex: true), .both,
+                "visibility: both stored on round-trips")
+    expectEqual(ProviderVisibility.normalize(claude: true, codex: false), .claudeOnly,
+                "visibility: Claude-only round-trips")
+    expectEqual(ProviderVisibility.normalize(claude: false, codex: true),
+                ProviderVisibility(claude: false, codex: true), "visibility: Codex-only round-trips")
+    // Impossible state (hand-edited defaults) repairs to the app's original behaviour.
+    expectEqual(ProviderVisibility.normalize(claude: false, codex: false), .claudeOnly,
+                "visibility: neither visible repairs to Claude-only")
+}
+
+func testProviderVisibilityToggling() {
+    let both = ProviderVisibility.both
+    expect(both.canToggle(.claude) && both.canToggle(.codex), "visibility: with both on, either may be hidden")
+    expectEqual(both.toggling(.claude), ProviderVisibility(claude: false, codex: true),
+                "visibility: hiding Claude leaves Codex")
+    expectEqual(both.toggling(.codex), .claudeOnly, "visibility: hiding Codex leaves Claude")
+
+    // The last visible provider cannot be hidden — the menu disables that item.
+    let claudeOnly = ProviderVisibility.claudeOnly
+    expect(!claudeOnly.canToggle(.claude), "visibility: last provider (Claude) cannot be hidden")
+    expect(claudeOnly.toggling(.claude) == nil, "visibility: hiding the last provider returns nil")
+    expect(claudeOnly.canToggle(.codex), "visibility: the hidden provider can always be turned back on")
+    expectEqual(claudeOnly.toggling(.codex), .both, "visibility: turning Codex back on restores both")
+
+    let codexOnly = ProviderVisibility(claude: false, codex: true)
+    expect(!codexOnly.canToggle(.codex), "visibility: last provider (Codex) cannot be hidden")
+    expectEqual(codexOnly.toggling(.claude), .both, "visibility: turning Claude back on restores both")
+}
+
+// MARK: - Tests: window edge cases
+
+/// Windows are built with Calendar arithmetic rather than 86_400-second math, so
+/// they must survive a DST transition. America/Denver falls back on 2026-11-01.
+func testSevenDayWindowCrossesDST() {
+    var cal = Calendar(identifier: .gregorian)
+    cal.timeZone = TimeZone(identifier: "America/Denver")!
+    let now = cal.date(from: DateComponents(year: 2026, month: 11, day: 3, hour: 14))!
+
+    func turn(_ date: Date, _ total: Int) -> CodexTurn {
+        CodexTurn(timestamp: date, inputTokens: total, cachedInputTokens: 0,
+                  outputTokens: 0, totalTokens: total)
+    }
+    // Window start is local midnight 6 days back: 2026-10-28 00:00 MDT.
+    let insideEdge = cal.date(from: DateComponents(year: 2026, month: 10, day: 28, hour: 0, minute: 30))!
+    let outsideEdge = cal.date(from: DateComponents(year: 2026, month: 10, day: 27, hour: 23, minute: 30))!
+    let summary = aggregateCodexUsage(
+        turnsBySession: ["a.jsonl": [turn(insideEdge, 100), turn(outsideEdge, 900)]],
+        now: now, calendar: cal)
+    expectEqual(summary.last7DaysTotal, 100,
+                "DST: 7-day window starts at local midnight 6 days back, not now minus 7x86400")
+    expectEqual(summary.last30DaysTotal, 1000, "DST: both turns are inside the 30-day window")
+}
+
+/// month-to-date on the 1st: only today counts, even though the 30-day window
+/// still reaches back into the previous month.
+func testMonthToDateOnFirstOfMonth() {
+    var cal = Calendar(identifier: .gregorian)
+    cal.timeZone = TimeZone(identifier: "America/Denver")!
+    let now = cal.date(from: DateComponents(year: 2026, month: 9, day: 1, hour: 0, minute: 30))!
+
+    func turn(_ date: Date, _ total: Int) -> CodexTurn {
+        CodexTurn(timestamp: date, inputTokens: total, cachedInputTokens: 0,
+                  outputTokens: 0, totalTokens: total)
+    }
+    let thisMonth = cal.date(from: DateComponents(year: 2026, month: 9, day: 1, hour: 0, minute: 10))!
+    let lastMonth = cal.date(from: DateComponents(year: 2026, month: 8, day: 31, hour: 23, minute: 50))!
+    let summary = aggregateCodexUsage(
+        turnsBySession: ["a.jsonl": [turn(thisMonth, 10), turn(lastMonth, 500)]],
+        now: now, calendar: cal)
+    expectEqual(summary.monthToDateTotal, 10, "MTD on the 1st excludes 10 minutes earlier in the previous month")
+    expectEqual(summary.last30DaysTotal, 510, "the 30-day window still includes the previous month")
+    expectEqual(summary.todayTotal, 10, "today starts at local midnight")
+}
+
+/// A clock-skewed or mis-stamped future line must not count anywhere — and must
+/// not advertise recent activity while every window reads zero.
+func testFutureDatedTurnIsIgnored() {
+    let (cal, now) = codexTestCalendar()
+    let future = cal.date(byAdding: .hour, value: 3, to: now)!
+    let summary = aggregateCodexUsage(
+        turnsBySession: ["a.jsonl": [
+            CodexTurn(timestamp: future, inputTokens: 999, cachedInputTokens: 0,
+                      outputTokens: 999, totalTokens: 999)]],
+        now: now, calendar: cal)
+    expectEqual(summary.todayTotal, 0, "future turn excluded from today")
+    expectEqual(summary.last30DaysTotal, 0, "future turn excluded from every window")
+    expect(summary.lastActivity == nil, "future turn does not set lastActivity")
+}
+
+/// A limits-only token_count event (payload.info null) still reports rate_limits.
+func testLimitsOnlyLineStillReportsLimits() {
+    let limitsOnly = """
+    {"timestamp":"2026-08-26T19:34:25.107Z","type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":{"plan_type":"business","spend_control_reached":true}}}
+    """
+    guard let parsed = parseCodexLine(limitsOnly) else {
+        expect(false, "limits-only token_count line parses")
+        return
+    }
+    expect(parsed.turn == nil, "limits-only line yields no turn")
+    expectEqual(parsed.limitStatus?.spendControlReached, true, "limits-only line still reports spend_control_reached")
+    expect(parsed.limitStatus?.isLimited == true, "limits-only line flags as limited")
+}
+
+/// Defensive branches in the spend-control parser: malformed and out-of-range
+/// values must degrade rather than surface a wrong gauge.
+func testCodexPlanUsageDefensiveBranches() {
+    // Grouped numerals are not Double-parseable; nil means "fall back to budget".
+    expect(CodexPlanUsage.parse(#"{"spend_control":{"individual_limit":{"limit":"4,300","used":"100"}}}"#
+        .data(using: .utf8)!) == nil, "plan: grouped numeral limit degrades to nil rather than a wrong number")
+
+    if let zero = CodexPlanUsage.parse(#"{"spend_control":{"individual_limit":{"limit":0,"used":50}}}"#
+        .data(using: .utf8)!) {
+        expectEqual(zero.usedPercent, 0, "plan: zero limit never divides by zero")
+        expect(zero.remainingCredits == 0, "plan: remaining floors at zero when used exceeds limit")
+    } else {
+        expect(false, "plan: zero limit still parses")
+    }
+
+    if let over = CodexPlanUsage.parse(#"{"spend_control":{"individual_limit":{"limit":100,"used":250,"used_percent":250}}}"#
+        .data(using: .utf8)!) {
+        expectEqual(over.usedPercent, 100, "plan: out-of-range used_percent clamps to 100")
+    } else {
+        expect(false, "plan: over-limit body still parses")
+    }
+}
+
 // MARK: - Run all tests
 
 print("Running ClusageTests…")
@@ -244,6 +643,24 @@ testMenuBarTime()
 testBand()
 testMenuBarShortLabel()
 testRefreshIntervalNormalize()
+testParseCodexTokenCountLine()
+testParseCodexModelAndLimitLines()
+testAggregateCodexUsage()
+testCodexPricing()
+testBudgetBarometer()
+testFormatCostAndTokens()
+testCodexPlanUsageParse()
+testMenuBarShortDate()
+testMenuBarCountdown()
+testStartOfNextMonth()
+testMenuBarStyleNormalize()
+testProviderVisibilityDefaults()
+testProviderVisibilityToggling()
+testSevenDayWindowCrossesDST()
+testMonthToDateOnFirstOfMonth()
+testFutureDatedTurnIsIgnored()
+testLimitsOnlyLineStillReportsLimits()
+testCodexPlanUsageDefensiveBranches()
 
 if failures == 0 {
     print("OK — all tests passed")
