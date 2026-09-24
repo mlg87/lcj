@@ -290,14 +290,25 @@ func testParseCodexModelAndLimitLines() {
     }
 
     let limited = """
-    {"timestamp":"2026-08-26T19:34:25.107Z","type":"event_msg","payload":{"type":"token_count","rate_limits":{"credits":{"has_credits":false},"spend_control_reached":true,"rate_limit_reached_type":"credits_exhausted","primary":{"used_percent":97.6}}}}
+    {"timestamp":"2026-08-26T19:34:25.107Z","type":"event_msg","payload":{"type":"token_count","rate_limits":{"credits":{"has_credits":false},"spend_control_reached":true,"rate_limit_reached_type":"credits_exhausted","primary":{"used_percent":97.6,"reset_at":1788220801},"secondary":{"used_percent":43.2,"reset_at":1788307201}}}}
     """
     if let status = parseCodexLimitStatus(limited) {
         expect(status.isLimited, "codex: spend control / exhausted credits flag as limited")
         expectEqual(status.primaryUsedPercent, 98, "codex: primary used_percent rounded")
+        expectEqual(status.primaryResetsAt, Date(timeIntervalSince1970: 1788220801),
+                    "codex: primary reset parsed")
+        expectEqual(status.secondaryUsedPercent, 43, "codex: secondary used_percent rounded")
+        expectEqual(status.secondaryResetsAt, Date(timeIntervalSince1970: 1788307201),
+                    "codex: secondary reset parsed")
     } else {
         expect(false, "codex: limited status parses")
     }
+
+    let cliSpelling = """
+    {"timestamp":"2026-08-26T19:34:25.107Z","type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":12.0,"window_minutes":300,"resets_at":1788220801}}}}
+    """
+    expectEqual(parseCodexLimitStatus(cliSpelling)?.primaryResetsAt, Date(timeIntervalSince1970: 1788220801),
+                "codex: resets_at (CLI spelling) parses like reset_at")
 }
 
 // MARK: - Tests: Codex aggregation + pricing
@@ -438,6 +449,7 @@ func testCodexPlanUsageParse() {
         expect(abs(plan.remainingCredits - 695.6501) < 0.001, "plan: string remaining parsed")
         expectEqual(plan.resetsAt, Date(timeIntervalSince1970: 1788220801), "plan: reset_at epoch parsed")
         expect(!plan.reached, "plan: reached false")
+        expectEqual(plan.planType, "business", "plan: top-level plan_type parsed for the dropdown badge")
     } else {
         expect(false, "plan: real wham/usage body parses")
     }
@@ -494,6 +506,7 @@ func testMenuBarStyleNormalize() {
     expectEqual(MenuBarStyle.normalize(nil), .grid, "style: absent → grid (pre-existing layout)")
     expectEqual(MenuBarStyle.normalize("bogus"), .grid, "style: unknown → grid")
     expectEqual(MenuBarStyle.normalize("remaining"), .remaining, "style: remaining round-trips")
+    expectEqual(MenuBarStyle.normalize("centerDash"), .centerDash, "style: center dash round-trips")
     expectEqual(MenuBarStyle.defaultStyle, .grid, "style: default stays the historical grid")
 }
 
@@ -629,6 +642,228 @@ func testCodexPlanUsageDefensiveBranches() {
     }
 }
 
+// MARK: - Tests: dropdown (daily series, pace, cards)
+
+/// en_US time formats put U+202F before AM/PM; compare against plain spaces.
+func plainSpaces(_ s: String) -> String { s.replacingOccurrences(of: "\u{202F}", with: " ") }
+
+func testCodexDailySeries() {
+    let (cal, now) = codexTestCalendar()   // 2026-08-26 14:00 Denver
+    func turn(daysAgo: Int, hour: Int, total: Int) -> CodexTurn {
+        let day = cal.date(byAdding: .day, value: -daysAgo, to: cal.startOfDay(for: now))!
+        return CodexTurn(timestamp: cal.date(byAdding: .hour, value: hour, to: day)!, inputTokens: total,
+                         cachedInputTokens: 0, outputTokens: 0, totalTokens: total)
+    }
+    let summary = aggregateCodexUsage(turnsBySession: ["a.jsonl": [
+        turn(daysAgo: 0, hour: 9, total: 100), turn(daysAgo: 0, hour: 1, total: 50),
+        turn(daysAgo: 29, hour: 3, total: 7), turn(daysAgo: 30, hour: 3, total: 999)]],
+        now: now, calendar: cal)
+    expectEqual(summary.daily.count, 30, "daily: one entry per day of the 30-day window")
+    expectEqual(summary.daily.last?.totalTokens, 150, "daily: today's turns land in the last entry")
+    expectEqual(summary.daily.first?.totalTokens, 7, "daily: 29 days back is the first entry; 30 is outside")
+    expectEqual(summary.daily.first?.day, cal.date(byAdding: .day, value: -29, to: cal.startOfDay(for: now)),
+                "daily: entries start at local midnight")
+    expectEqual(summary.daily.map(\.totalTokens).reduce(0, +), summary.last30DaysTotal,
+                "daily: entries sum to the 30-day total")
+    expect(aggregateCodexUsage(turnsBySession: [:], now: now, calendar: cal).daily.allSatisfy { $0.totalTokens == 0 },
+           "daily: no turns still yields a zero-filled series")
+}
+
+/// The fall-back day is 25 hours long; a late turn on it must not slide into
+/// the next day the way 86_400-second bucketing would.
+func testCodexDailySeriesAcrossDST() {
+    var cal = Calendar(identifier: .gregorian)
+    cal.timeZone = TimeZone(identifier: "America/Denver")!
+    let now = cal.date(from: DateComponents(year: 2026, month: 11, day: 3, hour: 14))!
+    let late = cal.date(from: DateComponents(year: 2026, month: 11, day: 1, hour: 23, minute: 30))!
+    let summary = aggregateCodexUsage(turnsBySession: ["a.jsonl": [
+        CodexTurn(timestamp: late, inputTokens: 5, cachedInputTokens: 0, outputTokens: 0, totalTokens: 5)]],
+        now: now, calendar: cal)
+    expectEqual(summary.daily.firstIndex { $0.totalTokens == 5 }, 27,
+                "daily DST: 23:30 on Nov 1 stays on Nov 1 (index 27; Nov 3 is 29)")
+}
+
+func testUsagePace() {
+    let (cal, now) = codexTestCalendar()
+    // 5h window with 1h left: 80% elapsed.
+    guard let pace = usagePace(usedPercent: 40, resetsAt: now.addingTimeInterval(3600),
+                               windowLength: UsageWindow.fiveHours, now: now) else {
+        expect(false, "pace: computes for a live window")
+        return
+    }
+    expect(abs(pace.elapsedFraction - 0.8) < 1e-9, "pace: elapsed share from reset minus window length")
+    expect(abs(pace.expectedPercent - 80) < 1e-9, "pace: even-burn point = elapsed share")
+    expect(abs((pace.projectedPercent ?? 0) - 50) < 1e-9, "pace: projection = used ÷ elapsed share")
+    expect(pace.runsOutAt == nil, "pace: no run-out while the projection stays under 100")
+
+    // 60% after 1h of 5h: the remaining 40% goes in 40 minutes at that rate.
+    let hot = usagePace(usedPercent: 60, resetsAt: now.addingTimeInterval(4 * 3600),
+                        windowLength: UsageWindow.fiveHours, now: now)
+    expectEqual(hot?.runsOutAt, now.addingTimeInterval(40 * 60), "pace: run-out = remaining ÷ (used ÷ elapsed)")
+    expect(usagePace(usedPercent: 100, resetsAt: now.addingTimeInterval(3600), windowLength: UsageWindow.fiveHours,
+                     now: now)?.runsOutAt == nil, "pace: no run-out once the limit is already hit")
+
+    // 1h into a week is under the 3% floor: marker yes, projection no.
+    let early = usagePace(usedPercent: 5, resetsAt: now.addingTimeInterval(UsageWindow.week - 3600),
+                          windowLength: UsageWindow.week, now: now)
+    expect(early != nil && early?.projectedPercent == nil, "pace: no projection before 3% of the window")
+
+    expect(usagePace(usedPercent: 50, resetsAt: nil, windowLength: UsageWindow.week, now: now) == nil,
+           "pace: unknown reset → nil")
+    expect(usagePace(usedPercent: 50, resetsAt: now.addingTimeInterval(-60), windowLength: UsageWindow.week,
+                     now: now) == nil, "pace: past reset → nil")
+    expectEqual(usagePace(usedPercent: 10, resetsAt: now.addingTimeInterval(2 * UsageWindow.week),
+                          windowLength: UsageWindow.week, now: now)?.elapsedFraction, 0,
+                "pace: a reset beyond one window pins elapsed at zero instead of going negative")
+
+    // Monthly window is calendar-based: Jul 31 14:00 → Aug 31 14:00 is 31 days.
+    let monthlyReset = cal.date(from: DateComponents(year: 2026, month: 8, day: 31, hour: 14))!
+    let monthly = monthlyUsagePace(usedPercent: 50, resetsAt: monthlyReset, now: now, calendar: cal)
+    expect(abs((monthly?.elapsedFraction ?? 0) - 26.0 / 31.0) < 1e-9,
+           "pace: monthly window starts one calendar month before its reset")
+}
+
+func testPaceStatusWording() {
+    let (_, now) = codexTestCalendar()
+    func pace(_ expected: Double, projected: Double?, runsOut: Date? = nil) -> UsagePace {
+        UsagePace(elapsedFraction: expected / 100, expectedPercent: expected,
+                  projectedPercent: projected, runsOutAt: runsOut)
+    }
+    expectEqual(paceStatus(pace: pace(50, projected: 102), usedPercent: 51, limitReached: false, now: now),
+                UsageStatusText("On pace", .normal), "pace text: within 2 points reads On pace")
+    expectEqual(paceStatus(pace: pace(50, projected: 72), usedPercent: 36, limitReached: false, now: now),
+                UsageStatusText("14% in reserve", .normal), "pace text: under the even line reports the reserve")
+    expectEqual(paceStatus(pace: pace(40, projected: 150, runsOut: now.addingTimeInterval(2 * 3600 + 10 * 60)),
+                           usedPercent: 60, limitReached: false, now: now),
+                UsageStatusText("Runs out in 2h 10m", .warning), "pace text: over the line says when it runs out")
+    expectEqual(paceStatus(pace: nil, usedPercent: 100, limitReached: true, now: now),
+                UsageStatusText("Limit reached", .critical), "pace text: a hit limit wins over pace")
+    expect(paceStatus(pace: pace(1, projected: nil), usedPercent: 3, limitReached: false, now: now) == nil,
+           "pace text: silent before a projection exists")
+}
+
+func testDropdownTimeText() {
+    let (cal, now) = codexTestCalendar()   // Wed 2026-08-26 14:00 Denver
+    let en = Locale(identifier: "en_US")
+    expectEqual(detailCountdown(to: now.addingTimeInterval(2 * 3600 + 14 * 60), from: now), "2h 14m",
+                "detail countdown: spaced units")
+    expectEqual(detailCountdown(to: now.addingTimeInterval(4 * 86400 + 9 * 3600), from: now), "4d 9h",
+                "detail countdown: days and hours")
+    expectEqual(detailCountdown(to: now.addingTimeInterval(38 * 60), from: now), "38m", "detail countdown: minutes")
+
+    let tonight = cal.date(from: DateComponents(year: 2026, month: 8, day: 26, hour: 18, minute: 30))!
+    expectEqual(plainSpaces(resetClockText(tonight, now: now, calendar: cal, locale: en)), "6:30 PM",
+                "clock text: later today is the time alone")
+    let monday = cal.date(from: DateComponents(year: 2026, month: 8, day: 31, hour: 14))!
+    expectEqual(plainSpaces(resetClockText(monday, now: now, calendar: cal, locale: en)), "Mon 2:00 PM",
+                "clock text: within six days adds the weekday")
+    let nextWed = cal.date(from: DateComponents(year: 2026, month: 9, day: 2, hour: 13))!
+    expectEqual(resetClockText(nextWed, now: now, calendar: cal, locale: en), "Sep 2",
+                "clock text: a week out uses the date, so a Wednesday reset can't read as today")
+    expectEqual(plainSpaces(resetSentence(tonight, now: now, calendar: cal, locale: en)),
+                "Resets in 4h 30m · 6:30 PM", "reset sentence: countdown, then clock time")
+    expectEqual(resetSentence(nil, now: now), "Reset time not reported", "reset sentence: unknown reset")
+    expectEqual(resetSentence(now.addingTimeInterval(20), now: now), "Resetting now", "reset sentence: imminent")
+
+    expectEqual(relativeAgo(now.addingTimeInterval(-30), now: now), "just now", "ago: under a minute")
+    expectEqual(relativeAgo(now.addingTimeInterval(-4 * 60), now: now), "4m ago", "ago: minutes")
+    expectEqual(relativeAgo(now.addingTimeInterval(-3 * 3600), now: now), "3h ago", "ago: hours")
+    expectEqual(relativeAgo(now.addingTimeInterval(-50 * 3600), now: now), "2d ago", "ago: days")
+}
+
+func meters(_ card: UsageCard) -> [UsageMeter] {
+    card.blocks.compactMap { if case .meter(let m) = $0 { return m } else { return nil } }
+}
+
+func testClaudeUsageCard() {
+    let (cal, now) = codexTestCalendar()
+    let en = Locale(identifier: "en_US")
+    let snap = UsageSnapshot(
+        session: Bucket(percent: 10, resetsAt: now.addingTimeInterval(4 * 3600), label: "5H"),
+        weeklyScoped: Bucket(percent: 22, resetsAt: now.addingTimeInterval(4 * 86400), label: "FABLE"),
+        weeklyAll: Bucket(percent: 32, resetsAt: now.addingTimeInterval(4 * 86400), label: "WEEK"))
+    let card = claudeUsageCard(snapshot: snap, failureReason: nil, updatedAt: now.addingTimeInterval(-120),
+                               now: now, calendar: cal, locale: en)
+    expectEqual(card.freshness, "Updated 2m ago", "claude card: freshness line")
+    let m = meters(card)
+    expectEqual(m.map(\.title), ["Session", "Weekly", "Weekly"], "claude card: session, weekly, model-scoped week")
+    expectEqual(m.map { $0.subtitle ?? "" }, ["5-hour", "all models", "Fable only"], "claude card: subtitles name the window")
+    expectEqual(m.first?.valueText, "10% used", "claude card: value reads percent used, like claude.ai")
+    // 1h into the 5h window: 10% used against 20% expected.
+    expectEqual(m.first?.status, UsageStatusText("10% in reserve", .normal), "claude card: session pace verdict")
+    expect(abs((m.first?.paceMarkerPercent ?? 0) - 20) < 1e-9, "claude card: marker at the even-burn point")
+
+    let noScoped = claudeUsageCard(snapshot: UsageSnapshot(session: snap.session, weeklyScoped: nil,
+                                                           weeklyAll: snap.weeklyAll),
+                                   failureReason: nil, updatedAt: now, now: now)
+    expectEqual(meters(noScoped).count, 2, "claude card: no model-scoped bucket, no third meter")
+
+    let failed = claudeUsageCard(snapshot: nil, failureReason: "http_401", updatedAt: now, now: now)
+    expectEqual(failed.blocks, [.callout(UsageCallout(text: "Cookie rejected or expired",
+                                                      detail: "Paste a fresh one from claude.ai", severity: .warning))],
+                "claude card: a failed fetch is one callout with the next step")
+    let waiting = claudeUsageCard(snapshot: nil, failureReason: nil, updatedAt: nil, now: now)
+    expect(waiting.freshness == nil, "claude card: no freshness before the first fetch")
+    expectEqual(waiting.blocks, [.note("Waiting for first fetch…")], "claude card: waiting note")
+}
+
+func testCodexUsageCard() {
+    let (cal, now) = codexTestCalendar()   // 2026-08-26 14:00 Denver
+    let en = Locale(identifier: "en_US")
+    func summary(inputTokens: Int) -> CodexSummary {
+        aggregateCodexUsage(turnsBySession: ["a.jsonl": [
+            CodexTurn(timestamp: now.addingTimeInterval(-3600), inputTokens: inputTokens, cachedInputTokens: 0,
+                      outputTokens: 0, totalTokens: inputTokens, model: "gpt-5.6-sol")]],
+            now: now, calendar: cal)
+    }
+    func has(_ card: UsageCard, _ match: (UsageCardBlock) -> Bool) -> Bool { card.blocks.contains(where: match) }
+    let light = summary(inputTokens: 1_000_000)
+    let reset = cal.date(byAdding: .day, value: 5, to: now)!
+
+    // 4,279 of 4,300 rounds to 100% but is not reached: pace works from the exact ratio.
+    let nearly = CodexPlanUsage(limitCredits: 4300, usedCredits: 4279, remainingCredits: 21, usedPercent: 100,
+                                resetsAt: reset, reached: false, planType: "business")
+    let card = codexUsageCard(summary: light, scanFailed: false, plan: nearly, planFailureReason: nil, budget: 100,
+                              updatedAt: now, now: now, calendar: cal, locale: en)
+    expectEqual(card.badge, "Business", "codex card: plan badge")
+    guard let credits = meters(card).first else {
+        expect(false, "codex card: credits meter present")
+        return
+    }
+    expectEqual(credits.title, "Monthly credits", "codex card: credits meter leads")
+    expectEqual(credits.subtitle, "4,279 / 4,300", "codex card: exact credits beside the title")
+    expectEqual(credits.severity, .critical, "codex card: 100% is critical")
+    expect(credits.status?.text.hasPrefix("Runs out in") == true,
+           "codex card: 99.5% used projects a run-out instead of claiming the limit is hit, got \(credits.status?.text ?? "nil")")
+    expect(has(card) { if case .stats = $0 { return true }; return false }, "codex card: cost tiles")
+    expect(has(card) { if case .dailyChart = $0 { return true }; return false }, "codex card: daily chart")
+    expect(has(card) { if case .breakdown = $0 { return true }; return false }, "codex card: top models")
+
+    let reached = CodexPlanUsage(limitCredits: 4300, usedCredits: 4300, remainingCredits: 0, usedPercent: 100,
+                                 resetsAt: reset, reached: true)
+    let blocked = codexUsageCard(summary: light, scanFailed: false, plan: reached, planFailureReason: nil,
+                                 budget: 100, updatedAt: now, now: now, calendar: cal, locale: en)
+    expectEqual(meters(blocked).first?.status, UsageStatusText("Limit reached", .critical),
+                "codex card: a reached spend control says so")
+
+    // No spend control: the personal budget, labelled as a target.
+    let budget = codexUsageCard(summary: light, scanFailed: false, plan: nil, planFailureReason: "no_spend_control",
+                                budget: 100, updatedAt: now, now: now, calendar: cal, locale: en)
+    expectEqual(meters(budget).first?.title, "Monthly budget", "codex card: budget meter without a limit")
+    expectEqual(meters(budget).first?.subtitle, "personal target", "codex card: budget says it is not a provider cap")
+    // 50M sol input tokens ≈ $200 against a $150 target.
+    let over = codexUsageCard(summary: summary(inputTokens: 50_000_000), scanFailed: false, plan: nil,
+                              planFailureReason: nil, budget: 150, updatedAt: now, now: now, calendar: cal, locale: en)
+    expectEqual(meters(over).first?.status?.text, "$50 over budget", "codex card: overshoot in whole dollars")
+
+    let failed = codexUsageCard(summary: nil, scanFailed: true, plan: nil, planFailureReason: "no_token",
+                                budget: 100, updatedAt: now, now: now)
+    expect(failed.blocks.contains(.note("Sign in with the Codex CLI to show your monthly limit")),
+           "codex card: a missing token explains the absent credits meter")
+    expect(has(failed) { if case .callout(let c) = $0 { return c.text == "Codex usage unavailable" }; return false },
+           "codex card: scan failure callout")
+}
+
 // MARK: - Run all tests
 
 print("Running ClusageTests…")
@@ -661,6 +896,13 @@ testMonthToDateOnFirstOfMonth()
 testFutureDatedTurnIsIgnored()
 testLimitsOnlyLineStillReportsLimits()
 testCodexPlanUsageDefensiveBranches()
+testCodexDailySeries()
+testCodexDailySeriesAcrossDST()
+testUsagePace()
+testPaceStatusWording()
+testDropdownTimeText()
+testClaudeUsageCard()
+testCodexUsageCard()
 
 if failures == 0 {
     print("OK — all tests passed")

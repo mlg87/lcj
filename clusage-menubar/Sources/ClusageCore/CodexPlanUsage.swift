@@ -29,15 +29,18 @@ public struct CodexPlanUsage: Equatable, Sendable {
     public let resetsAt: Date?
     /// True when the spend control is currently blocking usage.
     public let reached: Bool
+    /// Top-level plan_type ("business", "plus", …), shown as the dropdown badge.
+    public let planType: String?
 
     public init(limitCredits: Double, usedCredits: Double, remainingCredits: Double,
-                usedPercent: Int, resetsAt: Date?, reached: Bool) {
+                usedPercent: Int, resetsAt: Date?, reached: Bool, planType: String? = nil) {
         self.limitCredits = limitCredits
         self.usedCredits = usedCredits
         self.remainingCredits = remainingCredits
         self.usedPercent = usedPercent
         self.resetsAt = resetsAt
         self.reached = reached
+        self.planType = planType
     }
 
     /// Parse the wham/usage response body. Returns nil when the response has
@@ -80,6 +83,7 @@ public struct CodexPlanUsage: Equatable, Sendable {
             remainingCredits: remaining,
             usedPercent: percent,
             resetsAt: resetsAt,
-            reached: (spend["reached"] as? Bool) ?? false)
+            reached: (spend["reached"] as? Bool) ?? false,
+            planType: (doc["plan_type"] as? String).flatMap { $0.isEmpty ? nil : $0 })
     }
 }

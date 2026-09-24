@@ -10,6 +10,9 @@ public enum MenuBarStyle: String, CaseIterable, Sendable {
     /// rendered as "N% left · ↻<countdown>" on a draining segmented bar. Dollar
     /// estimates and secondary limits live in the dropdown only.
     case remaining
+    /// Two provider rows with overlapping weekly (solid) and five-hour
+    /// (dashed) usage in one long track, compact W/H values, and a reset.
+    case centerDash
 
     /// Pre-existing layout, also the fallback for absent/unknown stored values.
     public static let defaultStyle = MenuBarStyle.grid
@@ -19,6 +22,7 @@ public enum MenuBarStyle: String, CaseIterable, Sendable {
         switch self {
         case .grid:      return "Usage Grid (% used, reset time)"
         case .remaining: return "Remaining Capacity (% left, countdown)"
+        case .centerDash: return "Center Dash (weekly + 5-hour overlay)"
         }
     }
 

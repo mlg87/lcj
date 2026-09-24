@@ -11,16 +11,16 @@ cookie — paste it once, no keychain access, no API key setup.
 **Codex column (only when Codex is installed):** `1D` / `7D` estimated Codex cost · `MO` monthly limit gauge · `RST` monthly reset date — see [Codex column](#codex-column)  
 **Colors:** green <70% · yellow 70–89% · red ≥90%  
 **Auto-refresh:** every 5 minutes by default (plus an immediate fetch on wake) — pick
-1/2/3/5/8/13 minutes via **Refresh Every** in the dropdown; the choice persists in the
+1/2/3/5/8/13 minutes via **Settings → Refresh Every** in the dropdown; the choice persists in the
 `com.mlg87.clusage-menubar` preferences domain under key `refresh_interval_minutes`.  
-**Providers:** show either Claude or Codex or both via **Show in Menu Bar** (keys
+**Providers:** show either Claude or Codex or both via **Settings → Show in Menu Bar** (keys
 `show_claude` / `codex_column_visible`) — see [Showing one provider or both](#showing-one-provider-or-both).
 
 ---
 
 ## Menu bar layouts
 
-**Menu Bar Layout** in the dropdown switches between two layouts (persisted under
+**Settings → Menu Bar Layout** in the dropdown switches between three layouts (persisted under
 `menubar_style`):
 
 - **Usage Grid** (default) — the layout above: percent *used* per limit, the 5h
@@ -43,6 +43,49 @@ cookie — paste it once, no keychain access, no API key setup.
   it reads `$18 over`). Dollar estimates and secondary limits live in the dropdown.
   Colour signals attention rather than consumption: neutral bars, **amber** when
   ≤30% remains, **red** when ≤10% remains.
+- **Center Dash** — a wider, glanceable two-row display inspired by a dashboard
+  layout. Each provider gets one long track: the solid fill is weekly usage and
+  the dashed overlay is five-hour usage; where the dashes cross the fill they are
+  cut out of it, so both stay readable. Compact `W12 · H46` values sit beside the
+  tracks with the next five-hour reset countdown at the end. On Codex plans that
+  do not expose primary/secondary rate-limit windows, the GPT row falls back to
+  a solid monthly-usage bar and `MO97 · 7D$…` instead of empty W/H values. Reset
+  countdowns are per row: GPT uses its monthly reset while Claude uses its
+  five-hour reset.
+
+  <img src="assets/menubar-center-dash.png" alt="Center Dash in dark and light menu bars: a GPT row with a solid monthly bar, and a CLD row with a solid weekly fill and a dashed five-hour overlay, shown at W54 · H38 and at W18 · H64" width="299">
+
+---
+
+## Dropdown
+
+One drawn card per visible provider, laid out the way dedicated usage trackers
+([CodexBar](https://github.com/steipete/CodexBar) and others) have converged on:
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/dropdown-dark.png">
+  <img src="assets/dropdown.png" alt="Clusage dropdown: a Claude card with Session, Weekly and Fable-only meters, each with a pace marker, reset time and pace verdict; a Codex card with a monthly credits meter, cost tiles, a 30-day daily cost chart and top models; then Refresh Now, Open Claude Usage, Open Codex Usage, and Settings with its submenu open" width="604">
+</picture>
+
+<sub>Rendered from the app's own menu code with sample numbers.</sub>
+
+- **Header** — provider, plan badge when one is reported (`Business`), and
+  `Updated 2m ago`.
+- **One meter per limit** — `% used`, a bar with a tick where an even burn would
+  be by now, `Resets in 4h 6m · 1:30 PM`, and a pace verdict: `On pace` (within 2
+  points), `14% in reserve`, or `Runs out in 2h 10m` when the current average
+  rate empties the limit before it resets. Pace stays hidden until 3% of the
+  window has passed. Bars are blue until a limit needs attention: amber at
+  70–89%, red at 90%+, always with an icon and words rather than colour alone.
+- **Codex extras** from local logs — cost tiles (today / 7 days / 30 days / this
+  month), a 30-day daily cost chart (today highlighted, hover a day for detail),
+  and the top models over 7 days. Costs are API-equivalent estimates.
+- **Menu bar key** — with Center Dash active, a one-line legend for the solid
+  (weekly) and dashed (5-hour) marks.
+- **Open Claude Usage / Open Codex Usage** open each provider's own usage page.
+- **Settings** holds every preference (refresh interval, layout, providers, Codex
+  column, session cookie, Launch at Login) one level down, so the top level is
+  usage and actions.
 
 ---
 
@@ -59,7 +102,7 @@ RESETS 9:00 PM │  F  ▓▓▓░ 90%  │  MO ▓▓▓░ 84%  RST 8/31
 
 - **`1D` / `7D`** — estimated Codex cost today and over the rolling last 7 days,
   parsed locally from `~/.codex/sessions/**/*.jsonl` (no network, no auth).
-  Switch to raw token counts via **Codex Column → Token Counts**.
+  Switch to raw token counts via **Settings → Codex Column → Token Counts**.
 - **`MO`** — the month gauge. When your ChatGPT workspace has **spend controls**
   enabled, this is the real monthly credit limit fetched from
   `chatgpt.com/backend-api/wham/usage` (standard green/yellow/red limit bands) and
@@ -67,17 +110,17 @@ RESETS 9:00 PM │  F  ▓▓▓░ 90%  │  MO ▓▓▓░ 84%  RST 8/31
   from the Codex CLI's own `~/.codex/auth.json`, never logged, never sent anywhere
   but `chatgpt.com`; a stale token self-heals the next time you run `codex`.
 - **`MO` fallback** — plans without spend controls report no limit at all, so the
-  gauge instead frames month-to-date estimated cost against **Codex Column →
+  gauge instead frames month-to-date estimated cost against **Settings → Codex Column →
   Monthly Budget** (default $100/month): green at or under budget · yellow up to
   2× · red beyond 2×.
 
-The dropdown gains a **Codex** section with full-precision numbers, the per-model
-7-day breakdown, sessions active today, and any limit/spend-control flags OpenAI
-reports.
+The dropdown gains a **Codex** card (see [Dropdown](#dropdown)) with the limit
+meter, cost tiles, a 30-day daily cost chart, the top models over 7 days, sessions
+active today, and any limit/spend-control flags OpenAI reports.
 
 ### Showing one provider or both
 
-**Show in Menu Bar** lists both providers with a checkmark each — uncheck either
+**Settings → Show in Menu Bar** lists both providers with a checkmark each — uncheck either
 to drop it from the menu bar and the dropdown. One must stay visible: the last
 checked provider is drawn greyed out, so the rule is apparent instead of a click
 that does nothing. With no Codex install detected both entries are greyed out,
@@ -222,23 +265,24 @@ release stays a draft until both assets upload; if the job fails, fix and re-run
 
 ## Troubleshooting
 
-**No session cookie set** — use **Set Session Cookie…** in the menu bar dropdown.
+**No session cookie set** — use **Settings → Set Session Cookie…** in the menu bar dropdown.
 Follow the in-app instructions to copy the `Cookie` header from DevTools on
 claude.ai/settings/usage and paste it into the dialog.
 
 **Cookie rejected or expired** — your session has expired. Log in to claude.ai again,
 then copy a fresh cookie via the same DevTools steps and paste it with
-**Set Session Cookie…**.
+**Settings → Set Session Cookie…**.
 
 **No Codex column** — the column only appears when `~/.codex/sessions` (or
-`~/.codex/archived_sessions`) exists and **Show in Menu Bar → Codex** is checked.
+`~/.codex/archived_sessions`) exists and **Settings → Show in Menu Bar → Codex** is checked.
 Run `codex` once to create the directory. Without a Codex install both **Show in
 Menu Bar** entries are greyed out, since there is nothing to switch between.
 
 **`MO` shows dollars instead of a percent** — your ChatGPT plan reports no spend
 control, so the gauge falls back to the monthly budget barometer. If your workspace
 does have spend controls, make sure the Codex CLI is signed in (`~/.codex/auth.json`);
-the dropdown's "Monthly limit:" row says which case you're in.
+the Codex card says which case you're in: a **Monthly credits** meter for a real
+limit, a **Monthly budget · personal target** meter plus a sign-in note otherwise.
 
 **Launch at Login doesn't work** — `SMAppService` requires the app to be in a stable
 location (e.g. `/Applications`). It won't work when run via `swift run` or directly

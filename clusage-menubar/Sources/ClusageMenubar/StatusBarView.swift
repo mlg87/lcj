@@ -19,6 +19,10 @@
 /// in the dropdown. Neutral bars; amber when capacity is low; red when nearly
 /// exhausted — colour means "needs attention", not "how much was consumed".
 ///
+/// A third, MenuBarStyle.centerDash, gives each provider one long track: the
+/// weekly limit as a solid fill, the five-hour limit as a dashed overlay, then
+/// compact W/H values and a reset countdown.
+///
 /// Rendering is pure NSColor / NSBezierPath so it adapts automatically to light/dark
 /// menu bar appearance (all colors are dynamic NSColor semantics).
 
@@ -79,7 +83,7 @@ final class StatusBarView: NSView {
     /// measurement and drawing cannot straddle a minute boundary.
     var renderDate = Date()
     /// Which layout to draw (MenuBarStyleStore). AppDelegate repaints every
-    /// minute in .remaining so the countdowns stay current.
+    /// minute in .remaining and .centerDash so the countdowns stay current.
     var style: MenuBarStyle = .grid
 
     /// Codex renders when the user wants it AND either it has data or it is the
@@ -134,6 +138,7 @@ final class StatusBarView: NSView {
         switch style {
         case .grid:      return gridPreferredWidth()
         case .remaining: return remainingPreferredWidth()
+        case .centerDash: return centerDashPreferredWidth()
         }
     }
 
@@ -198,6 +203,7 @@ final class StatusBarView: NSView {
         switch style {
         case .grid:      drawGrid()
         case .remaining: drawRemaining()
+        case .centerDash: drawCenterDash()
         }
     }
 
@@ -600,28 +606,183 @@ final class StatusBarView: NSView {
         NSGraphicsContext.restoreGraphicsState()
     }
 
-    /// Claude Code's own spinner glyph — familiar to the people this app is for.
-    private func drawClaudeIcon(center: NSPoint) {
-        let attrs: [NSAttributedString.Key: Any] = [.font: Self.iconFont, .foregroundColor: NSColor.labelColor]
-        let str = Self.claudeIcon as NSString
-        let size = str.size(withAttributes: attrs)
-        str.draw(at: NSPoint(x: center.x - size.width / 2, y: center.y - size.height / 2), withAttributes: attrs)
+    // MARK: - Center-dash style
+
+    private static let dashNameFont = NSFont.systemFont(ofSize: 8, weight: .bold)
+    private static let dashTrackW: CGFloat = 112
+    private static let dashTrackH: CGFloat = 8
+    private static let dashNameGap: CGFloat = 5
+    private static let dashValueGap: CGFloat = 6
+    private static let dashResetGap: CGFloat = 8
+    private static let dashLength: CGFloat = 4
+    private static let dashGap: CGFloat = 2.5
+    private static let dashThickness: CGFloat = 2
+
+    private struct CenterDashRow {
+        let name: String
+        /// Long window, drawn as the solid fill: weekly, or monthly on Codex
+        /// plans that report no rate-limit windows.
+        let week: Int?
+        /// Five-hour window, drawn as the dashed overlay.
+        let hour: Int?
+        let valueText: String
+        let resetsAt: Date?
     }
 
-    /// Simplified OpenAI blossom: six rounded petals rotated 60° apart. Drawn as
-    /// vector so it stays monochrome and matches the ✻ (no emoji exists for it).
-    private func drawCodexIcon(center: NSPoint) {
-        let size = Self.blossomSize
-        let petalW = size * 0.28
-        let petalH = size * 0.92
-        NSColor.labelColor.setFill()
-        for i in 0..<6 {
-            let rect = NSRect(x: -petalW / 2, y: -petalH / 2, width: petalW, height: petalH)
-            let petal = NSBezierPath(roundedRect: rect, xRadius: petalW / 2, yRadius: petalW / 2)
-            petal.transform(using: AffineTransform(rotationByDegrees: CGFloat(i) * 60))
-            petal.transform(using: AffineTransform(translationByX: center.x, byY: center.y))
-            petal.fill()
+    private func centerDashRows() -> [CenterDashRow] {
+        var rows: [CenterDashRow] = []
+        if showsCodexColumn {
+            let limits = codexSummary?.limitStatus
+            let primary = limits?.primaryUsedPercent
+            let secondary = limits?.secondaryUsedPercent
+            if primary != nil || secondary != nil {
+                rows.append(CenterDashRow(
+                    name: "GPT", week: secondary, hour: primary,
+                    valueText: "W\(secondary.map(String.init) ?? "–") · H\(primary.map(String.init) ?? "–")",
+                    resetsAt: limits?.primaryResetsAt))
+            } else if let plan = codexPlan {
+                // Monthly is the long window, so it takes the solid fill.
+                let sevenDay = codexSummary.map { formatCost($0.last7DaysCost) } ?? "–"
+                rows.append(CenterDashRow(
+                    name: "GPT", week: plan.usedPercent, hour: nil,
+                    valueText: "MO\(plan.usedPercent) · 7D\(sevenDay)", resetsAt: plan.resetsAt))
+            } else if let summary = codexSummary {
+                let month = budgetFillPercent(monthCost: summary.monthToDateCost, budget: codexBudget)
+                rows.append(CenterDashRow(
+                    name: "GPT", week: month, hour: nil,
+                    valueText: "MO\(month) · 7D\(formatCost(summary.last7DaysCost))",
+                    resetsAt: startOfNextMonth(after: renderDate)))
+            } else {
+                rows.append(CenterDashRow(name: "GPT", week: nil, hour: nil,
+                                          valueText: "MO– · 7D–", resetsAt: nil))
+            }
         }
+        if showsClaudeColumn {
+            let hour = isDegraded ? nil : snapshot?.session?.percent
+            let week = isDegraded ? nil : snapshot?.weeklyAll?.percent
+            rows.append(CenterDashRow(name: "CLD",
+                                      week: week,
+                                      hour: hour,
+                                      valueText: "W\(week.map(String.init) ?? "–") · H\(hour.map(String.init) ?? "–")",
+                                      resetsAt: isDegraded ? nil : snapshot?.session?.resetsAt))
+        }
+        return rows
+    }
+
+    private func centerDashPreferredWidth() -> CGFloat {
+        let rows = centerDashRows()
+        let nameW = rows.map { measured($0.name, font: Self.dashNameFont) }.max() ?? 0
+        let valueW = rows.map { measured($0.valueText, font: Self.percentFont) }.max() ?? 0
+        let resetW = rows.map {
+            measured("↻ \(menuBarCountdown(to: $0.resetsAt, from: renderDate))", font: Self.percentFont)
+        }.max() ?? 0
+        return 4 + nameW + Self.dashNameGap + Self.dashTrackW + Self.dashValueGap
+            + valueW + Self.dashResetGap + resetW
+    }
+
+    private func drawCenterDash() {
+        let rows = centerDashRows()
+        guard !rows.isEmpty else { return }
+        let midY = bounds.midY
+        let centers: [CGFloat] = rows.count == 1
+            ? [midY]
+            : rows.indices.map { midY + Self.rowOffset - CGFloat($0) * 2 * Self.rowOffset }
+        let nameW = rows.map { measured($0.name, font: Self.dashNameFont) }.max() ?? 0
+        let valueW = rows.map { measured($0.valueText, font: Self.percentFont) }.max() ?? 0
+        let nameX: CGFloat = 2
+        let trackX = nameX + nameW + Self.dashNameGap
+        let valueX = trackX + Self.dashTrackW + Self.dashValueGap
+
+        for (row, cy) in zip(rows, centers) {
+            let nameAttrs: [NSAttributedString.Key: Any] = [
+                .font: Self.dashNameFont, .foregroundColor: NSColor.labelColor]
+            let name = row.name as NSString
+            let nameSize = name.size(withAttributes: nameAttrs)
+            name.draw(at: NSPoint(x: nameX, y: cy - nameSize.height / 2), withAttributes: nameAttrs)
+            drawCenterDashTrack(week: row.week, hour: row.hour, x: trackX, centerY: cy)
+            let valueAttrs: [NSAttributedString.Key: Any] = [
+                .font: Self.percentFont, .foregroundColor: NSColor.labelColor]
+            let value = row.valueText as NSString
+            let valueSize = value.size(withAttributes: valueAttrs)
+            value.draw(at: NSPoint(x: valueX, y: cy - valueSize.height / 2), withAttributes: valueAttrs)
+
+            let resetText = "↻ \(menuBarCountdown(to: row.resetsAt, from: renderDate))"
+            let reset = resetText as NSString
+            let resetSize = reset.size(withAttributes: valueAttrs)
+            reset.draw(at: NSPoint(x: valueX + valueW + Self.dashResetGap,
+                                   y: cy - resetSize.height / 2), withAttributes: valueAttrs)
+        }
+
+        let resetX = valueX + valueW + Self.dashResetGap
+        NSColor.labelColor.withAlphaComponent(0.65).setFill()
+        NSBezierPath(rect: NSRect(x: resetX - Self.dashResetGap / 2, y: midY - 8,
+                                  width: 1, height: 16)).fill()
+    }
+
+    /// Solid fill = weekly (or monthly), dashed overlay = five-hour.
+    ///
+    /// WHY the dashes are cut out of the fill instead of stroked over it: the
+    /// weekly fill usually runs past the five-hour mark, and same-ink dashes on
+    /// top of it disappear. Punching them out (even-odd clip) keeps the 5h extent
+    /// readable wherever it sits, in both menu bar appearances, without adding a
+    /// colour to a monochrome menu bar. Past the end of the fill they are ink.
+    private func drawCenterDashTrack(week: Int?, hour: Int?, x: CGFloat, centerY: CGFloat) {
+        let track = NSRect(x: x, y: centerY - Self.dashTrackH / 2,
+                           width: Self.dashTrackW, height: Self.dashTrackH)
+        let radius = Self.dashTrackH / 2
+        NSColor.labelColor.withAlphaComponent(0.16).setFill()
+        NSBezierPath(roundedRect: track, xRadius: radius, yRadius: radius).fill()
+
+        let dashes = NSBezierPath()
+        if let hour, hour > 0 {
+            let endX = x + Self.dashTrackW * CGFloat(hour) / 100
+            let r = Self.dashThickness / 2
+            var dashX = x + 1
+            while dashX < endX {
+                let w = min(Self.dashLength, endX - dashX)
+                dashes.appendRoundedRect(NSRect(x: dashX, y: centerY - r, width: w, height: Self.dashThickness),
+                                         xRadius: min(r, w / 2), yRadius: r)
+                dashX += Self.dashLength + Self.dashGap
+            }
+        }
+
+        var fill: NSBezierPath?
+        if let week, week > 0 {
+            let fillRect = NSRect(x: x, y: track.minY,
+                                  width: Self.dashTrackW * CGFloat(week) / 100, height: Self.dashTrackH)
+            let path = NSBezierPath(roundedRect: fillRect, xRadius: radius, yRadius: radius)
+            NSGraphicsContext.saveGraphicsState()
+            if !dashes.isEmpty {
+                let knockout = NSBezierPath(rect: track)
+                knockout.append(dashes)
+                knockout.windingRule = .evenOdd
+                knockout.addClip()
+            }
+            NSColor.labelColor.withAlphaComponent(0.48).setFill()
+            path.fill()
+            NSGraphicsContext.restoreGraphicsState()
+            fill = path
+        }
+
+        guard !dashes.isEmpty else { return }
+        NSGraphicsContext.saveGraphicsState()
+        if let fill {
+            let outsideFill = NSBezierPath(rect: track)
+            outsideFill.append(fill)
+            outsideFill.windingRule = .evenOdd
+            outsideFill.addClip()
+        }
+        NSColor.labelColor.setFill()
+        dashes.fill()
+        NSGraphicsContext.restoreGraphicsState()
+    }
+
+    private func drawClaudeIcon(center: NSPoint) {
+        ProviderGlyph.drawClaude(center: center, fontSize: Self.iconFont.pointSize, color: .labelColor)
+    }
+
+    private func drawCodexIcon(center: NSPoint) {
+        ProviderGlyph.drawCodex(center: center, diameter: Self.blossomSize, color: .labelColor)
     }
 
     // MARK: - Fill color

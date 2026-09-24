@@ -61,16 +61,24 @@ public struct CodexLimitStatus: Equatable, Sendable, Codable {
     public let rateLimitReachedType: String?
     /// primary window used_percent, if the backend ever populates it.
     public let primaryUsedPercent: Int?
+    public let primaryResetsAt: Date?
+    /// secondary window is the longer (normally weekly) Codex window.
+    public let secondaryUsedPercent: Int?
+    public let secondaryResetsAt: Date?
 
     public init(planType: String?, hasCredits: Bool?, creditBalance: Double?,
                 spendControlReached: Bool?, rateLimitReachedType: String?,
-                primaryUsedPercent: Int?) {
+                primaryUsedPercent: Int?, primaryResetsAt: Date? = nil,
+                secondaryUsedPercent: Int? = nil, secondaryResetsAt: Date? = nil) {
         self.planType = planType
         self.hasCredits = hasCredits
         self.creditBalance = creditBalance
         self.spendControlReached = spendControlReached
         self.rateLimitReachedType = rateLimitReachedType
         self.primaryUsedPercent = primaryUsedPercent
+        self.primaryResetsAt = primaryResetsAt
+        self.secondaryUsedPercent = secondaryUsedPercent
+        self.secondaryResetsAt = secondaryResetsAt
     }
 
     /// True when any signal says usage is being blocked or capped right now.
@@ -90,6 +98,20 @@ public struct CodexModelUsage: Equatable, Sendable {
 
     public init(model: String, totalTokens: Int, cost: Double) {
         self.model = model
+        self.totalTokens = totalTokens
+        self.cost = cost
+    }
+}
+
+/// One local calendar day of Codex usage, for the dropdown's daily chart.
+public struct CodexDailyUsage: Equatable, Sendable {
+    /// Local midnight that starts the day.
+    public let day: Date
+    public let totalTokens: Int
+    public let cost: Double
+
+    public init(day: Date, totalTokens: Int, cost: Double) {
+        self.day = day
         self.totalTokens = totalTokens
         self.cost = cost
     }
@@ -117,13 +139,18 @@ public struct CodexSummary: Equatable, Sendable {
     public let lastActivity: Date?
     /// From the newest rate_limits payload in the window, nil when none seen.
     public let limitStatus: CodexLimitStatus?
+    /// The rolling 30-day window one entry per local day, oldest first and
+    /// today last; days without turns are zero rather than missing so a chart
+    /// can index by position.
+    public let daily: [CodexDailyUsage]
 
     public init(todayTotal: Int, todayOutput: Int, todayCost: Double,
                 last7DaysTotal: Int, last7DaysOutput: Int, last7DaysCost: Double,
                 last30DaysTotal: Int, last30DaysCost: Double,
                 monthToDateTotal: Int, monthToDateCost: Double,
                 perModel: [CodexModelUsage], sessionsToday: Int,
-                lastActivity: Date?, limitStatus: CodexLimitStatus?) {
+                lastActivity: Date?, limitStatus: CodexLimitStatus?,
+                daily: [CodexDailyUsage] = []) {
         self.todayTotal = todayTotal
         self.todayOutput = todayOutput
         self.todayCost = todayCost
@@ -138,6 +165,7 @@ public struct CodexSummary: Equatable, Sendable {
         self.sessionsToday = sessionsToday
         self.lastActivity = lastActivity
         self.limitStatus = limitStatus
+        self.daily = daily
     }
 
     public static let empty = CodexSummary(
@@ -256,11 +284,21 @@ private func codexLimitStatus(payload: [String: Any]) -> CodexLimitStatus? {
     guard let rl = payload["rate_limits"] as? [String: Any] else { return nil }
 
     let credits = rl["credits"] as? [String: Any]
-    var primaryPercent: Int?
-    if let primary = rl["primary"] as? [String: Any],
-       let pct = primary["used_percent"] as? NSNumber {
-        primaryPercent = Int(pct.doubleValue.rounded())
+    func window(_ key: String) -> (percent: Int?, reset: Date?) {
+        guard let value = rl[key] as? [String: Any] else { return (nil, nil) }
+        let percent = (value["used_percent"] as? NSNumber).map {
+            clampPercent(Int($0.doubleValue.rounded()))
+        }
+        // Accept both spellings: the wham/usage API says reset_at, while the
+        // CLI's rate-limit window type says resets_at. No populated window has
+        // been observed in local logs yet, so the test fixtures are synthetic.
+        let reset = ((value["resets_at"] ?? value["reset_at"]) as? NSNumber).map {
+            Date(timeIntervalSince1970: $0.doubleValue)
+        }
+        return (percent, reset)
     }
+    let primary = window("primary")
+    let secondary = window("secondary")
 
     return CodexLimitStatus(
         planType: rl["plan_type"] as? String,
@@ -268,7 +306,10 @@ private func codexLimitStatus(payload: [String: Any]) -> CodexLimitStatus? {
         creditBalance: (credits?["balance"] as? NSNumber)?.doubleValue,
         spendControlReached: rl["spend_control_reached"] as? Bool,
         rateLimitReachedType: rl["rate_limit_reached_type"] as? String,
-        primaryUsedPercent: primaryPercent
+        primaryUsedPercent: primary.percent,
+        primaryResetsAt: primary.reset,
+        secondaryUsedPercent: secondary.percent,
+        secondaryResetsAt: secondary.reset
     )
 }
 
@@ -335,6 +376,13 @@ public func aggregateCodexUsage(
     var sessionsToday = 0
     var lastActivity: Date?
 
+    // dayStarts[i] is local midnight of chart day i (0 = oldest, 29 = today,
+    // 30 = tomorrow as the closing bound). Calendar arithmetic, not multiples of
+    // 86_400, so a DST day is 23 or 25 hours and turns never slide a day.
+    let dayStarts = (0...30).compactMap { calendar.date(byAdding: .day, value: $0, to: monthWindowStart) }
+    var dailyTokens = [Int](repeating: 0, count: 30)
+    var dailyCost = [Double](repeating: 0, count: 30)
+
     for (_, turns) in turnsBySession {
         var sessionActiveToday = false
         for t in turns {
@@ -351,6 +399,10 @@ public func aggregateCodexUsage(
             if t.timestamp >= monthWindowStart {
                 window30Total += t.totalTokens
                 window30Cost += cost
+                if let day = chartDayIndex(t.timestamp, dayStarts: dayStarts) {
+                    dailyTokens[day] += t.totalTokens
+                    dailyCost[day] += cost
+                }
             }
             if t.timestamp >= monthStart {
                 mtdTotal += t.totalTokens
@@ -380,13 +432,31 @@ public func aggregateCodexUsage(
                         cost: perModelCost[model] ?? 0)
     }.sorted { $0.cost > $1.cost }
 
+    let daily = dayStarts.count == 31
+        ? (0..<30).map { CodexDailyUsage(day: dayStarts[$0], totalTokens: dailyTokens[$0], cost: dailyCost[$0]) }
+        : []
+
     return CodexSummary(
         todayTotal: todayTotal, todayOutput: todayOutput, todayCost: todayCost,
         last7DaysTotal: weekTotal, last7DaysOutput: weekOutput, last7DaysCost: weekCost,
         last30DaysTotal: window30Total, last30DaysCost: window30Cost,
         monthToDateTotal: mtdTotal, monthToDateCost: mtdCost,
         perModel: perModel, sessionsToday: sessionsToday,
-        lastActivity: lastActivity, limitStatus: limitStatus)
+        lastActivity: lastActivity, limitStatus: limitStatus,
+        daily: daily)
+}
+
+/// Index of the chart day containing `date`, by binary search over the 31
+/// midnights (cheaper than a Calendar call per turn on a cold scan of
+/// hundreds of thousands of turns). nil outside the window.
+private func chartDayIndex(_ date: Date, dayStarts: [Date]) -> Int? {
+    guard dayStarts.count == 31, date >= dayStarts[0], date < dayStarts[30] else { return nil }
+    var lo = 0, hi = 30   // invariant: dayStarts[lo] <= date < dayStarts[hi]
+    while hi - lo > 1 {
+        let mid = (lo + hi) / 2
+        if dayStarts[mid] <= date { lo = mid } else { hi = mid }
+    }
+    return lo
 }
 
 // MARK: - Token count formatting
