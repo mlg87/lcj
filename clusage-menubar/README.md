@@ -20,7 +20,7 @@ cookie — paste it once, no keychain access, no API key setup.
 
 ## Menu bar layouts
 
-**Menu Bar Layout** in the dropdown switches between two layouts (persisted under
+**Menu Bar Layout** in the dropdown switches between three layouts (persisted under
 `menubar_style`):
 
 - **Usage Grid** (default) — the layout above: percent *used* per limit, the 5h
@@ -43,6 +43,15 @@ cookie — paste it once, no keychain access, no API key setup.
   it reads `$18 over`). Dollar estimates and secondary limits live in the dropdown.
   Colour signals attention rather than consumption: neutral bars, **amber** when
   ≤30% remains, **red** when ≤10% remains.
+- **Center Dash** — a wider, glanceable two-row display inspired by a dashboard
+  layout. Each provider gets one long track: the solid fill is weekly usage and
+  the dashed overlay is five-hour usage; where the dashes cross the fill they are
+  cut out of it, so both stay readable. Compact `W12 · H46` values sit beside the
+  tracks with the next five-hour reset countdown at the end. On Codex plans that
+  do not expose primary/secondary rate-limit windows, the GPT row falls back to
+  a solid monthly-usage bar and `MO97 · 7D$…` instead of empty W/H values. Reset
+  countdowns are per row: GPT uses its monthly reset while Claude uses its
+  five-hour reset.
 
 ---
 

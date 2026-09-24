@@ -27,7 +27,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var latestCodexState: CodexScanState?
     private var latestPlanState: CodexPlanState?
     private var refreshTimer: Timer?
-    /// Minute tick that repaints countdowns in the Remaining layout; display only.
+    /// Minute tick that repaints the countdowns in the Remaining and Center Dash
+    /// layouts; display only.
     private var countdownTimer: Timer?
     /// Guards against overlapping scans. A cold scan runs for tens of seconds
     /// while the timer, wake, ⌘R and every provider toggle all call refreshAll(),
@@ -214,11 +215,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refreshTimer = timer
     }
 
-    /// The Remaining layout shows "↻19m" countdowns, which go stale between data
-    /// refreshes; repaint each minute while that layout is active. No I/O.
+    /// The Remaining and Center Dash layouts show "↻19m" countdowns, which go
+    /// stale between data refreshes; repaint each minute while either is active.
+    /// No I/O.
     private func setupCountdownTimer() {
         countdownTimer?.invalidate()
-        guard statusView.style == .remaining else {
+        guard statusView.style == .remaining || statusView.style == .centerDash else {
             countdownTimer = nil
             return
         }

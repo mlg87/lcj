@@ -290,14 +290,25 @@ func testParseCodexModelAndLimitLines() {
     }
 
     let limited = """
-    {"timestamp":"2026-08-26T19:34:25.107Z","type":"event_msg","payload":{"type":"token_count","rate_limits":{"credits":{"has_credits":false},"spend_control_reached":true,"rate_limit_reached_type":"credits_exhausted","primary":{"used_percent":97.6}}}}
+    {"timestamp":"2026-08-26T19:34:25.107Z","type":"event_msg","payload":{"type":"token_count","rate_limits":{"credits":{"has_credits":false},"spend_control_reached":true,"rate_limit_reached_type":"credits_exhausted","primary":{"used_percent":97.6,"reset_at":1788220801},"secondary":{"used_percent":43.2,"reset_at":1788307201}}}}
     """
     if let status = parseCodexLimitStatus(limited) {
         expect(status.isLimited, "codex: spend control / exhausted credits flag as limited")
         expectEqual(status.primaryUsedPercent, 98, "codex: primary used_percent rounded")
+        expectEqual(status.primaryResetsAt, Date(timeIntervalSince1970: 1788220801),
+                    "codex: primary reset parsed")
+        expectEqual(status.secondaryUsedPercent, 43, "codex: secondary used_percent rounded")
+        expectEqual(status.secondaryResetsAt, Date(timeIntervalSince1970: 1788307201),
+                    "codex: secondary reset parsed")
     } else {
         expect(false, "codex: limited status parses")
     }
+
+    let cliSpelling = """
+    {"timestamp":"2026-08-26T19:34:25.107Z","type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":12.0,"window_minutes":300,"resets_at":1788220801}}}}
+    """
+    expectEqual(parseCodexLimitStatus(cliSpelling)?.primaryResetsAt, Date(timeIntervalSince1970: 1788220801),
+                "codex: resets_at (CLI spelling) parses like reset_at")
 }
 
 // MARK: - Tests: Codex aggregation + pricing
@@ -494,6 +505,7 @@ func testMenuBarStyleNormalize() {
     expectEqual(MenuBarStyle.normalize(nil), .grid, "style: absent → grid (pre-existing layout)")
     expectEqual(MenuBarStyle.normalize("bogus"), .grid, "style: unknown → grid")
     expectEqual(MenuBarStyle.normalize("remaining"), .remaining, "style: remaining round-trips")
+    expectEqual(MenuBarStyle.normalize("centerDash"), .centerDash, "style: center dash round-trips")
     expectEqual(MenuBarStyle.defaultStyle, .grid, "style: default stays the historical grid")
 }
 

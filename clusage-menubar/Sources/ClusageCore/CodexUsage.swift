@@ -61,16 +61,24 @@ public struct CodexLimitStatus: Equatable, Sendable, Codable {
     public let rateLimitReachedType: String?
     /// primary window used_percent, if the backend ever populates it.
     public let primaryUsedPercent: Int?
+    public let primaryResetsAt: Date?
+    /// secondary window is the longer (normally weekly) Codex window.
+    public let secondaryUsedPercent: Int?
+    public let secondaryResetsAt: Date?
 
     public init(planType: String?, hasCredits: Bool?, creditBalance: Double?,
                 spendControlReached: Bool?, rateLimitReachedType: String?,
-                primaryUsedPercent: Int?) {
+                primaryUsedPercent: Int?, primaryResetsAt: Date? = nil,
+                secondaryUsedPercent: Int? = nil, secondaryResetsAt: Date? = nil) {
         self.planType = planType
         self.hasCredits = hasCredits
         self.creditBalance = creditBalance
         self.spendControlReached = spendControlReached
         self.rateLimitReachedType = rateLimitReachedType
         self.primaryUsedPercent = primaryUsedPercent
+        self.primaryResetsAt = primaryResetsAt
+        self.secondaryUsedPercent = secondaryUsedPercent
+        self.secondaryResetsAt = secondaryResetsAt
     }
 
     /// True when any signal says usage is being blocked or capped right now.
@@ -256,11 +264,21 @@ private func codexLimitStatus(payload: [String: Any]) -> CodexLimitStatus? {
     guard let rl = payload["rate_limits"] as? [String: Any] else { return nil }
 
     let credits = rl["credits"] as? [String: Any]
-    var primaryPercent: Int?
-    if let primary = rl["primary"] as? [String: Any],
-       let pct = primary["used_percent"] as? NSNumber {
-        primaryPercent = Int(pct.doubleValue.rounded())
+    func window(_ key: String) -> (percent: Int?, reset: Date?) {
+        guard let value = rl[key] as? [String: Any] else { return (nil, nil) }
+        let percent = (value["used_percent"] as? NSNumber).map {
+            clampPercent(Int($0.doubleValue.rounded()))
+        }
+        // Accept both spellings: the wham/usage API says reset_at, while the
+        // CLI's rate-limit window type says resets_at. No populated window has
+        // been observed in local logs yet, so the test fixtures are synthetic.
+        let reset = ((value["resets_at"] ?? value["reset_at"]) as? NSNumber).map {
+            Date(timeIntervalSince1970: $0.doubleValue)
+        }
+        return (percent, reset)
     }
+    let primary = window("primary")
+    let secondary = window("secondary")
 
     return CodexLimitStatus(
         planType: rl["plan_type"] as? String,
@@ -268,7 +286,10 @@ private func codexLimitStatus(payload: [String: Any]) -> CodexLimitStatus? {
         creditBalance: (credits?["balance"] as? NSNumber)?.doubleValue,
         spendControlReached: rl["spend_control_reached"] as? Bool,
         rateLimitReachedType: rl["rate_limit_reached_type"] as? String,
-        primaryUsedPercent: primaryPercent
+        primaryUsedPercent: primary.percent,
+        primaryResetsAt: primary.reset,
+        secondaryUsedPercent: secondary.percent,
+        secondaryResetsAt: secondary.reset
     )
 }
 
