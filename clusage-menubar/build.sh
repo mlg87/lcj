@@ -35,11 +35,28 @@ if [[ ! -f "${APP_NAME}.icns" ]]; then
 fi
 
 # -- Compile each arch --
+# WHY --show-bin-path plus a copy per arch: the output directory depends on
+# the toolchain. Older SwiftPM wrote .build/<arch>-apple-macosx/release; the
+# newer build system writes .build/out/Products/Release for every arch, so the
+# old hardcoded path silently packaged whatever stale binary an earlier
+# toolchain had left there. A shared directory also means each arch build
+# overwrites the previous one, so every binary is copied out before the next.
+STAGE_DIR="$(mktemp -d)"
+trap 'rm -rf "$STAGE_DIR"' EXIT
 BINARY_PATHS=()
 for ARCH in $ARCHS; do
     echo "--> swift build -c release --arch ${ARCH}"
     swift build -c release --arch "$ARCH" 2>&1
-    BINARY_PATHS+=(".build/${ARCH}-apple-macosx/release/${APP_NAME}")
+    BIN_DIR="$(swift build -c release --arch "$ARCH" --show-bin-path)"
+    cp "${BIN_DIR}/${APP_NAME}" "${STAGE_DIR}/${APP_NAME}-${ARCH}"
+    # No pipe into grep -q here: under pipefail, grep exiting early can fail
+    # the check with SIGPIPE even when the arch matches.
+    SLICE_ARCHS="$(lipo -archs "${STAGE_DIR}/${APP_NAME}-${ARCH}")"
+    if [[ " ${SLICE_ARCHS} " != *" ${ARCH} "* ]]; then
+        echo "ERROR: ${BIN_DIR}/${APP_NAME} is ${SLICE_ARCHS}, not ${ARCH}" >&2
+        exit 1
+    fi
+    BINARY_PATHS+=("${STAGE_DIR}/${APP_NAME}-${ARCH}")
 done
 
 # -- Assemble app bundle --
