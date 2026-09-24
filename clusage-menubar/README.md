@@ -55,6 +55,28 @@ cookie — paste it once, no keychain access, no API key setup.
 
 ---
 
+## Dropdown
+
+One drawn card per visible provider, laid out the way dedicated usage trackers
+([CodexBar](https://github.com/steipete/CodexBar) and others) have converged on:
+
+- **Header** — provider, plan badge when one is reported (`Business`), and
+  `Updated 2m ago`.
+- **One meter per limit** — `% used`, a bar with a tick where an even burn would
+  be by now, `Resets in 4h 6m · 1:30 PM`, and a pace verdict: `On pace` (within 2
+  points), `14% in reserve`, or `Runs out in 2h 10m` when the current average
+  rate empties the limit before it resets. Pace stays hidden until 3% of the
+  window has passed. Bars are blue until a limit needs attention: amber at
+  70–89%, red at 90%+, always with an icon and words rather than colour alone.
+- **Codex extras** from local logs — cost tiles (today / 7 days / 30 days / this
+  month), a 30-day daily cost chart (today highlighted, hover a day for detail),
+  and the top models over 7 days. Costs are API-equivalent estimates.
+- **Menu bar key** — with Center Dash active, a one-line legend for the solid
+  (weekly) and dashed (5-hour) marks.
+- **Open Claude Usage / Open Codex Usage** open each provider's own usage page.
+
+---
+
 ## Codex column
 
 If the OpenAI Codex CLI (or Codex Desktop) is installed — i.e. `~/.codex/sessions`
@@ -80,9 +102,9 @@ RESETS 9:00 PM │  F  ▓▓▓░ 90%  │  MO ▓▓▓░ 84%  RST 8/31
   Monthly Budget** (default $100/month): green at or under budget · yellow up to
   2× · red beyond 2×.
 
-The dropdown gains a **Codex** section with full-precision numbers, the per-model
-7-day breakdown, sessions active today, and any limit/spend-control flags OpenAI
-reports.
+The dropdown gains a **Codex** card (see [Dropdown](#dropdown)) with the limit
+meter, cost tiles, a 30-day daily cost chart, the top models over 7 days, sessions
+active today, and any limit/spend-control flags OpenAI reports.
 
 ### Showing one provider or both
 
@@ -247,7 +269,8 @@ Menu Bar** entries are greyed out, since there is nothing to switch between.
 **`MO` shows dollars instead of a percent** — your ChatGPT plan reports no spend
 control, so the gauge falls back to the monthly budget barometer. If your workspace
 does have spend controls, make sure the Codex CLI is signed in (`~/.codex/auth.json`);
-the dropdown's "Monthly limit:" row says which case you're in.
+the Codex card says which case you're in: a **Monthly credits** meter for a real
+limit, a **Monthly budget · personal target** meter plus a sign-in note otherwise.
 
 **Launch at Login doesn't work** — `SMAppService` requires the app to be in a stable
 location (e.g. `/Applications`). It won't work when run via `swift run` or directly

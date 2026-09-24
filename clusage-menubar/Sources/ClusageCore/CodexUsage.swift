@@ -103,6 +103,20 @@ public struct CodexModelUsage: Equatable, Sendable {
     }
 }
 
+/// One local calendar day of Codex usage, for the dropdown's daily chart.
+public struct CodexDailyUsage: Equatable, Sendable {
+    /// Local midnight that starts the day.
+    public let day: Date
+    public let totalTokens: Int
+    public let cost: Double
+
+    public init(day: Date, totalTokens: Int, cost: Double) {
+        self.day = day
+        self.totalTokens = totalTokens
+        self.cost = cost
+    }
+}
+
 /// Aggregated Codex usage over the scan window.
 public struct CodexSummary: Equatable, Sendable {
     public let todayTotal: Int
@@ -125,13 +139,18 @@ public struct CodexSummary: Equatable, Sendable {
     public let lastActivity: Date?
     /// From the newest rate_limits payload in the window, nil when none seen.
     public let limitStatus: CodexLimitStatus?
+    /// The rolling 30-day window one entry per local day, oldest first and
+    /// today last; days without turns are zero rather than missing so a chart
+    /// can index by position.
+    public let daily: [CodexDailyUsage]
 
     public init(todayTotal: Int, todayOutput: Int, todayCost: Double,
                 last7DaysTotal: Int, last7DaysOutput: Int, last7DaysCost: Double,
                 last30DaysTotal: Int, last30DaysCost: Double,
                 monthToDateTotal: Int, monthToDateCost: Double,
                 perModel: [CodexModelUsage], sessionsToday: Int,
-                lastActivity: Date?, limitStatus: CodexLimitStatus?) {
+                lastActivity: Date?, limitStatus: CodexLimitStatus?,
+                daily: [CodexDailyUsage] = []) {
         self.todayTotal = todayTotal
         self.todayOutput = todayOutput
         self.todayCost = todayCost
@@ -146,6 +165,7 @@ public struct CodexSummary: Equatable, Sendable {
         self.sessionsToday = sessionsToday
         self.lastActivity = lastActivity
         self.limitStatus = limitStatus
+        self.daily = daily
     }
 
     public static let empty = CodexSummary(
@@ -356,6 +376,13 @@ public func aggregateCodexUsage(
     var sessionsToday = 0
     var lastActivity: Date?
 
+    // dayStarts[i] is local midnight of chart day i (0 = oldest, 29 = today,
+    // 30 = tomorrow as the closing bound). Calendar arithmetic, not multiples of
+    // 86_400, so a DST day is 23 or 25 hours and turns never slide a day.
+    let dayStarts = (0...30).compactMap { calendar.date(byAdding: .day, value: $0, to: monthWindowStart) }
+    var dailyTokens = [Int](repeating: 0, count: 30)
+    var dailyCost = [Double](repeating: 0, count: 30)
+
     for (_, turns) in turnsBySession {
         var sessionActiveToday = false
         for t in turns {
@@ -372,6 +399,10 @@ public func aggregateCodexUsage(
             if t.timestamp >= monthWindowStart {
                 window30Total += t.totalTokens
                 window30Cost += cost
+                if let day = chartDayIndex(t.timestamp, dayStarts: dayStarts) {
+                    dailyTokens[day] += t.totalTokens
+                    dailyCost[day] += cost
+                }
             }
             if t.timestamp >= monthStart {
                 mtdTotal += t.totalTokens
@@ -401,13 +432,31 @@ public func aggregateCodexUsage(
                         cost: perModelCost[model] ?? 0)
     }.sorted { $0.cost > $1.cost }
 
+    let daily = dayStarts.count == 31
+        ? (0..<30).map { CodexDailyUsage(day: dayStarts[$0], totalTokens: dailyTokens[$0], cost: dailyCost[$0]) }
+        : []
+
     return CodexSummary(
         todayTotal: todayTotal, todayOutput: todayOutput, todayCost: todayCost,
         last7DaysTotal: weekTotal, last7DaysOutput: weekOutput, last7DaysCost: weekCost,
         last30DaysTotal: window30Total, last30DaysCost: window30Cost,
         monthToDateTotal: mtdTotal, monthToDateCost: mtdCost,
         perModel: perModel, sessionsToday: sessionsToday,
-        lastActivity: lastActivity, limitStatus: limitStatus)
+        lastActivity: lastActivity, limitStatus: limitStatus,
+        daily: daily)
+}
+
+/// Index of the chart day containing `date`, by binary search over the 31
+/// midnights (cheaper than a Calendar call per turn on a cold scan of
+/// hundreds of thousands of turns). nil outside the window.
+private func chartDayIndex(_ date: Date, dayStarts: [Date]) -> Int? {
+    guard dayStarts.count == 31, date >= dayStarts[0], date < dayStarts[30] else { return nil }
+    var lo = 0, hi = 30   // invariant: dayStarts[lo] <= date < dayStarts[hi]
+    while hi - lo > 1 {
+        let mid = (lo + hi) / 2
+        if dayStarts[mid] <= date { lo = mid } else { hi = mid }
+    }
+    return lo
 }
 
 // MARK: - Token count formatting

@@ -2,7 +2,8 @@
 ///
 /// Plain AppKit; no SwiftUI. The status item hosts a custom StatusBarView subview
 /// so we get pixel-precise Stats-style layout. The NSMenu is rebuilt on every open
-/// (menuNeedsUpdate delegate) so the dropdown always shows fresh data.
+/// (menuNeedsUpdate delegate) so the dropdown always shows fresh data: one drawn
+/// card per provider (MenuCardView, fed by ClusageCore.UsageCard), then actions.
 ///
 /// Three refresh lanes share one cadence: the claude.ai limit fetch (UsageFetcher),
 /// the Codex local session-log scan (CodexScanner), and the ChatGPT monthly
@@ -251,45 +252,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
 
-        // Sections mirror the menu bar: a hidden provider is absent here too.
+        // Cards mirror the menu bar: a hidden provider is absent here too.
         // Codex additionally needs an install to have anything to report, so a
-        // Claude-only Mac sees no CLAUDE/CODEX headers and no Codex rows. It is
-        // not byte-for-byte the pre-Codex dropdown: the usage rows now say
-        // "% used", and Menu Bar Layout / Show in Menu Bar are always present.
+        // Claude-only Mac sees a single Claude card and no Codex items.
         let visibility = ProviderVisibilityStore.load()
         let showCodexSection = visibility.codex && CodexScanner.isCodexInstalled()
         let showClaudeSection = visibility.claude || !showCodexSection
+        let now = Date()
 
-        if showClaudeSection && showCodexSection { addSectionHeader(to: menu, title: "Claude") }
         if showClaudeSection {
-            switch latestState {
-            case .ok(let snap, let updatedAt):
-                addUsageRows(to: menu, snap: snap)
-                addUpdatedRow(to: menu, updatedAt: updatedAt)
-            case .degraded(let reason, let updatedAt):
-                addDegradedRow(to: menu, reason: reason)
-                addUpdatedRow(to: menu, updatedAt: updatedAt)
-            case nil:
-                addDisabledRow(to: menu, title: "Waiting for first fetch…")
-            }
+            addView(MenuCardView(card: claudeCard(now: now)), to: menu)
+            // Center Dash overlays two windows on one track, so it needs a key.
+            if statusView.style == .centerDash { addView(MenuBarKeyView(), to: menu) }
         }
-
         if showCodexSection {
             if showClaudeSection { menu.addItem(.separator()) }
-            addSectionHeader(to: menu, title: "Codex")
-            switch latestCodexState {
-            case .ok(let summary, let updatedAt):
-                addCodexRows(to: menu, summary: summary)
-                addUpdatedRow(to: menu, updatedAt: updatedAt)
-            case .degraded:
-                addDisabledRow(to: menu, title: "⚠︎ Codex usage unavailable: session scan failed")
-            case nil:
-                addDisabledRow(to: menu, title: "Waiting for first scan…")
-            }
+            addView(MenuCardView(card: codexCard(now: now)), to: menu)
         }
 
         menu.addItem(.separator())
         addRefreshItem(to: menu)
+        if showClaudeSection { addOpenURLItem(to: menu, title: "Open Claude Usage", url: Self.claudeUsageURL) }
+        if showCodexSection { addOpenURLItem(to: menu, title: "Open Codex Usage", url: Self.codexUsageURL) }
+        menu.addItem(.separator())
         addRefreshIntervalItem(to: menu)
         addMenuBarLayoutItem(to: menu)
         addShowInMenuBarItem(to: menu)
@@ -302,169 +287,68 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - Menu helpers
 
+    private static let claudeUsageURL = URL(string: "https://claude.ai/settings/usage")!
+    private static let codexUsageURL = URL(string: "https://chatgpt.com/codex/settings/usage")!
+
     private func addDisabledRow(to menu: NSMenu, title: String) {
         let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         item.isEnabled = false
         menu.addItem(item)
     }
 
-    private func addSectionHeader(to menu: NSMenu, title: String) {
-        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+    /// A drawn item (card or key). Disabled so arrow-key navigation skips
+    /// straight to the actions; the view draws the same either way.
+    private func addView(_ view: NSView, to menu: NSMenu) {
+        let item = NSMenuItem()
+        item.view = view
         item.isEnabled = false
-        item.attributedTitle = NSAttributedString(
-            string: title.uppercased(),
-            attributes: [
-                .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
-                .foregroundColor: NSColor.secondaryLabelColor,
-            ])
         menu.addItem(item)
     }
 
-    private func addUsageRows(to menu: NSMenu, snap: UsageSnapshot) {
-        func row(_ bucket: Bucket?, kind: String) -> NSMenuItem {
-            let label: String
-            let resetsStr: String
-            if let b = bucket {
-                let kindLabel: String
-                switch kind {
-                case "session": kindLabel = "Session (5h)"
-                case "weekly_scoped": kindLabel = b.label.capitalized + " (week)"
-                default: kindLabel = "Weekly (all models)"
-                }
-                resetsStr = menuDetailTime(b.resetsAt)
-                label = "\(kindLabel): \(b.percent)% used — resets \(resetsStr)"
-            } else {
-                label = kind == "session" ? "Session (5h): –" :
-                        kind == "weekly_scoped" ? "Fable (week): –" :
-                        "Weekly (all models): –"
-            }
-            let item = NSMenuItem(title: label, action: nil, keyEquivalent: "")
-            item.isEnabled = false
-            return item
-        }
-        menu.addItem(row(snap.session,      kind: "session"))
-        menu.addItem(row(snap.weeklyScoped, kind: "weekly_scoped"))
-        menu.addItem(row(snap.weeklyAll,    kind: "weekly_all"))
-    }
-
-    private func addDegradedRow(to menu: NSMenu, reason: String) {
-        let msg: String
-        switch reason {
-        case "no_cookie":
-            msg = "No session cookie — choose 'Set Session Cookie…' below"
-        case "no_org_id":
-            msg = "Org ID not found — re-copy the FULL cookie from claude.ai"
-        case "http_401":
-            msg = "Cookie rejected or expired — paste a fresh one from claude.ai"
-        case "network":
-            msg = "Network error"
-        case "http_5xx":
-            msg = "Anthropic API error"
-        default:  // "bad_shape"
-            msg = "Unexpected API response"
-        }
-        addDisabledRow(to: menu, title: "⚠︎ Usage unavailable: \(msg)")
-    }
-
-    // MARK: Codex rows
-
-    private func addCodexRows(to menu: NSMenu, summary: CodexSummary) {
-        addPlanRow(to: menu)
-        addDisabledRow(to: menu, title:
-            "Today: ≈\(formatCost(summary.todayCost)) — \(formatTokensLong(summary.todayTotal)) tokens (\(formatTokensLong(summary.todayOutput)) output)")
-        addDisabledRow(to: menu, title:
-            "Last 7 days: ≈\(formatCost(summary.last7DaysCost)) — \(formatTokensLong(summary.last7DaysTotal)) tokens")
-        addDisabledRow(to: menu, title:
-            "Last 30 days: ≈\(formatCost(summary.last30DaysCost)) — \(formatTokensLong(summary.last30DaysTotal)) tokens")
-        // The $ budget line is the MO gauge's meaning only when no real limit is
-        // reported; with a spend control the plan row above already covers MO.
-        if case .ok? = latestPlanState {
-            addDisabledRow(to: menu, title:
-                "This month: ≈\(formatCost(summary.monthToDateCost)) — \(formatTokensLong(summary.monthToDateTotal)) tokens")
-        } else {
-            let budget = CodexBudgetStore.load()
-            let pct = budget > 0 ? Int((summary.monthToDateCost / budget * 100).rounded()) : 0
-            addDisabledRow(to: menu, title:
-                "This month: ≈\(formatCost(summary.monthToDateCost)) — \(pct)% of your \(formatCost(budget))/mo budget (personal budget, not a provider limit)")
-        }
-        for m in summary.perModel {
-            addDisabledRow(to: menu, title:
-                "    \(m.model): ≈\(formatCost(m.cost)) — \(formatTokens(m.totalTokens)) (7d)")
-        }
-        addDisabledRow(to: menu, title: "Sessions today: \(summary.sessionsToday)")
-        addLimitStatusRow(to: menu, summary: summary)
-        if summary.lastActivity == nil {
-            addDisabledRow(to: menu, title: "No Codex activity in the last 30 days")
-        }
-        addDisabledRow(to: menu, title: "Costs are API-equivalent estimates (standard tier)")
-    }
-
-    /// The real monthly limit from ChatGPT's spend controls, when reported.
-    private func addPlanRow(to menu: NSMenu) {
-        switch latestPlanState {
-        case .ok(let plan, _)?:
-            let resets = menuDetailTime(plan.resetsAt)
-            if plan.reached {
-                addDisabledRow(to: menu, title:
-                    "⚠︎ Monthly limit REACHED — \(Int(plan.limitCredits.rounded())) credits, resets \(resets)")
-            } else {
-                addDisabledRow(to: menu, title:
-                    "Monthly limit (ChatGPT spend control): \(plan.usedPercent)% used — "
-                    + "\(Int(plan.usedCredits.rounded())) / \(Int(plan.limitCredits.rounded())) credits"
-                    + " — resets \(resets)")
-            }
-        case .degraded(let reason, _)?:
-            switch reason {
-            case "no_token":
-                addDisabledRow(to: menu, title: "Monthly limit: sign in with the Codex CLI to enable")
-            case "http_401":
-                addDisabledRow(to: menu, title: "Monthly limit: token expired — run codex once to refresh")
-            default:
-                break   // no spend control on this plan / transient network — budget row covers it
-            }
+    private func claudeCard(now: Date) -> UsageCard {
+        switch latestState {
+        case .ok(let snap, let updatedAt)?:
+            return claudeUsageCard(snapshot: snap, failureReason: nil, updatedAt: updatedAt, now: now)
+        case .degraded(let reason, let updatedAt)?:
+            return claudeUsageCard(snapshot: nil, failureReason: reason, updatedAt: updatedAt, now: now)
         case nil:
-            break
+            return claudeUsageCard(snapshot: nil, failureReason: nil, updatedAt: nil, now: now)
         }
     }
 
-    /// One line answering "am I near a limit?" with whatever the backend reports
-    /// in the session logs. Today that's usually "no limit data"; the richer
-    /// branches light up the moment Codex starts populating balance / windows /
-    /// spend-control flags.
-    private func addLimitStatusRow(to menu: NSMenu, summary: CodexSummary) {
-        guard let limit = summary.limitStatus else { return }
-        if limit.isLimited {
-            var reason = "usage limited"
-            if limit.spendControlReached == true { reason = "org spend control reached" }
-            else if let t = limit.rateLimitReachedType { reason = "rate limit reached (\(t))" }
-            else if limit.hasCredits == false { reason = "out of credits" }
-            addDisabledRow(to: menu, title: "⚠︎ Codex: \(reason)")
-            return
+    /// Joins the two Codex lanes: the session-log scan owns the freshness line,
+    /// since it is what the cost tiles and chart come from.
+    private func codexCard(now: Date) -> UsageCard {
+        var summary: CodexSummary?
+        var scanFailed = false
+        var updatedAt: Date?
+        switch latestCodexState {
+        case .ok(let s, let at)?:   summary = s; updatedAt = at
+        case .degraded(_, let at)?: scanFailed = true; updatedAt = at
+        case nil:                   break
         }
-        if let balance = limit.creditBalance {
-            addDisabledRow(to: menu, title: "Credits remaining: \(formatCost(balance))")
-        } else if let pct = limit.primaryUsedPercent {
-            addDisabledRow(to: menu, title: "Limit window: \(pct)% used")
-        } else if case .ok? = latestPlanState {
-            // The spend-control row already answers the limit question.
-        } else {
-            let plan = limit.planType.map { " (\($0) plan)" } ?? ""
-            addDisabledRow(to: menu, title: "No provider limit or balance reported by OpenAI\(plan) — MO gauge uses your budget")
+        var plan: CodexPlanUsage?
+        var planFailure: String?
+        switch latestPlanState {
+        case .ok(let p, _)?:            plan = p
+        case .degraded(let reason, _)?: planFailure = reason
+        case nil:                       break
         }
+        return codexUsageCard(summary: summary, scanFailed: scanFailed, plan: plan,
+                              planFailureReason: planFailure, budget: CodexBudgetStore.load(),
+                              updatedAt: updatedAt, now: now)
     }
 
-    // MARK: Shared rows
+    private func addOpenURLItem(to menu: NSMenu, title: String, url: URL) {
+        let item = NSMenuItem(title: title, action: #selector(openURLItem(_:)), keyEquivalent: "")
+        item.representedObject = url
+        item.target = self
+        menu.addItem(item)
+    }
 
-    private func addUpdatedRow(to menu: NSMenu, updatedAt: Date) {
-        let elapsed = Date().timeIntervalSince(updatedAt)
-        let label: String
-        if elapsed < 60 {
-            label = "Updated just now"
-        } else {
-            let mins = Int(elapsed / 60)
-            label = "Updated \(mins)m ago"
-        }
-        addDisabledRow(to: menu, title: label)
+    @objc private func openURLItem(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? URL else { return }
+        NSWorkspace.shared.open(url)
     }
 
     private func addRefreshItem(to menu: NSMenu) {
@@ -669,7 +553,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             CookieStore.save(cookie)
             fetcher.fetchNow()
         case .alertSecondButtonReturn:
-            NSWorkspace.shared.open(URL(string: "https://claude.ai/settings/usage")!)
+            NSWorkspace.shared.open(Self.claudeUsageURL)
             promptForCookie(prefill: field.stringValue)  // reopen; keep typed text
         default:
             break

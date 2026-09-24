@@ -777,28 +777,12 @@ final class StatusBarView: NSView {
         NSGraphicsContext.restoreGraphicsState()
     }
 
-    /// Claude Code's own spinner glyph — familiar to the people this app is for.
     private func drawClaudeIcon(center: NSPoint) {
-        let attrs: [NSAttributedString.Key: Any] = [.font: Self.iconFont, .foregroundColor: NSColor.labelColor]
-        let str = Self.claudeIcon as NSString
-        let size = str.size(withAttributes: attrs)
-        str.draw(at: NSPoint(x: center.x - size.width / 2, y: center.y - size.height / 2), withAttributes: attrs)
+        ProviderGlyph.drawClaude(center: center, fontSize: Self.iconFont.pointSize, color: .labelColor)
     }
 
-    /// Simplified OpenAI blossom: six rounded petals rotated 60° apart. Drawn as
-    /// vector so it stays monochrome and matches the ✻ (no emoji exists for it).
     private func drawCodexIcon(center: NSPoint) {
-        let size = Self.blossomSize
-        let petalW = size * 0.28
-        let petalH = size * 0.92
-        NSColor.labelColor.setFill()
-        for i in 0..<6 {
-            let rect = NSRect(x: -petalW / 2, y: -petalH / 2, width: petalW, height: petalH)
-            let petal = NSBezierPath(roundedRect: rect, xRadius: petalW / 2, yRadius: petalW / 2)
-            petal.transform(using: AffineTransform(rotationByDegrees: CGFloat(i) * 60))
-            petal.transform(using: AffineTransform(translationByX: center.x, byY: center.y))
-            petal.fill()
-        }
+        ProviderGlyph.drawCodex(center: center, diameter: Self.blossomSize, color: .labelColor)
     }
 
     // MARK: - Fill color
