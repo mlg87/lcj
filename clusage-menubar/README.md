@@ -53,12 +53,21 @@ cookie — paste it once, no keychain access, no API key setup.
   countdowns are per row: GPT uses its monthly reset while Claude uses its
   five-hour reset.
 
+  <img src="assets/menubar-center-dash.png" alt="Center Dash in dark and light menu bars: a GPT row with a solid monthly bar, and a CLD row with a solid weekly fill and a dashed five-hour overlay, shown at W54 · H38 and at W18 · H64" width="299">
+
 ---
 
 ## Dropdown
 
 One drawn card per visible provider, laid out the way dedicated usage trackers
 ([CodexBar](https://github.com/steipete/CodexBar) and others) have converged on:
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/dropdown-dark.png">
+  <img src="assets/dropdown.png" alt="Clusage dropdown: a Claude card with Session, Weekly and Fable-only meters, each with a pace marker, reset time and pace verdict; a Codex card with a monthly credits meter, cost tiles, a 30-day daily cost chart and top models; then Refresh Now, Open Claude Usage, Open Codex Usage, and Settings with its submenu open" width="604">
+</picture>
+
+<sub>Rendered from the app's own menu code with sample numbers.</sub>
 
 - **Header** — provider, plan badge when one is reported (`Business`), and
   `Updated 2m ago`.
