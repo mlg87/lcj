@@ -2,10 +2,11 @@
 ///
 /// Plain AppKit drawing, like StatusBarView: an NSMenuItem.view with a fixed
 /// width and a height measured from the card's blocks. Custom item views span
-/// the full menu width (probed on macOS 26: x = 0…menu width, while native item
-/// text starts at 22pt with its glyphs at ~24pt), so the insets below line card
-/// text up with "Refresh Now" underneath, and the provider glyph sits in the
-/// checkmark column.
+/// the full menu width (probed on macOS 26: x = 0…menu width). Native item text
+/// starts at 14pt, glyphs at 16pt, while no item in the menu shows a checkmark,
+/// and moves to 22pt once one does; the top level has none (preferences live in
+/// Settings), so the insets below line card text up with "Refresh Now" and with
+/// the native separators' ends.
 ///
 /// Colour follows one rule set: meters fill in the accent until a limit needs
 /// attention (warning amber, critical red — always with an icon and words, never
@@ -51,12 +52,13 @@ final class MenuCardView: NSView, NSViewToolTipOwner {
     // MARK: Metrics
 
     static let width: CGFloat = 340
-    /// Native menu item glyphs start here (text field at 22pt + 2pt cell inset).
-    static let leading: CGFloat = 24
+    /// Native item glyphs start here in a menu without a checkmark column
+    /// (text field at 14pt + 2pt cell inset).
+    static let leading: CGFloat = 16
     /// Where native separators and key equivalents end.
     static let trailing: CGFloat = 16
-    /// Centre of the checkmark column, where the provider glyph sits.
-    static let glyphCenterX: CGFloat = 15
+    /// Provider glyph and callout symbol sit inline, text starts this far in.
+    private static let iconIndent: CGFloat = 17
 
     private static let padTop: CGFloat = 4
     private static let padBottom: CGFloat = 8
@@ -195,15 +197,15 @@ final class MenuCardView: NSView, NSViewToolTipOwner {
 
     private func drawHeader(y: CGFloat) {
         let midY = y + Self.headerH / 2
+        let glyphCenter = NSPoint(x: contentLeft + 6, y: midY)
         switch card.provider {
-        case .claude:
-            ProviderGlyph.drawClaude(center: NSPoint(x: Self.glyphCenterX, y: midY), fontSize: 14, color: .labelColor)
-        case .codex:
-            ProviderGlyph.drawCodex(center: NSPoint(x: Self.glyphCenterX, y: midY), diameter: 11, color: .labelColor)
+        case .claude: ProviderGlyph.drawClaude(center: glyphCenter, fontSize: 14, color: .labelColor)
+        case .codex:  ProviderGlyph.drawCodex(center: glyphCenter, diameter: 11, color: .labelColor)
         }
+        let titleX = contentLeft + Self.iconIndent
         let title = Self.text(card.title, Self.titleFont, .labelColor)
         let titleSize = title.size()
-        title.draw(at: NSPoint(x: contentLeft, y: midY - titleSize.height / 2))
+        title.draw(at: NSPoint(x: titleX, y: midY - titleSize.height / 2))
 
         var freshnessW: CGFloat = 0
         if let freshness = card.freshness {
@@ -215,7 +217,7 @@ final class MenuCardView: NSView, NSViewToolTipOwner {
         if let badge = card.badge {
             let b = Self.text(badge, Self.badgeFont, .secondaryLabelColor)
             let size = b.size()
-            let x = contentLeft + titleSize.width + 7
+            let x = titleX + titleSize.width + 7
             let capsule = NSRect(x: x, y: midY - size.height / 2 - 1, width: size.width + 10, height: size.height + 2)
             guard capsule.maxX < contentRight - freshnessW - 8 else { return }
             NSColor.labelColor.withAlphaComponent(0.08).setFill()
@@ -454,15 +456,14 @@ final class MenuCardView: NSView, NSViewToolTipOwner {
 
     private func drawCallout(_ c: UsageCallout, y: CGFloat) {
         let text = Self.text(c.text, Self.rowFont, .labelColor)
-        // The symbol takes the checkmark column so the words stay on the text edge.
         let symbol = Self.symbolName(for: c.severity) ?? "info.circle.fill"
         let color = c.severity == .normal ? NSColor.secondaryLabelColor : CardPalette.fill(for: c.severity)
-        drawSymbol(symbol, color: color, pointSize: 11, rightEdge: contentLeft - 4,
-                   centerY: y + text.size().height / 2)
-        Self.drawTruncated(text, x: contentLeft, y: y, maxWidth: contentW)
+        drawSymbol(symbol, color: color, pointSize: 11, leftEdge: contentLeft, centerY: y + text.size().height / 2)
+        let textX = contentLeft + Self.iconIndent
+        Self.drawTruncated(text, x: textX, y: y, maxWidth: contentRight - textX)
         if let detail = c.detail {
             Self.drawTruncated(Self.text(detail, Self.smallFont, .secondaryLabelColor),
-                               x: contentLeft, y: y + 16, maxWidth: contentW)
+                               x: textX, y: y + 16, maxWidth: contentRight - textX)
         }
     }
 

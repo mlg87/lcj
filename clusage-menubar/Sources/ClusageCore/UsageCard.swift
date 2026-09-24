@@ -243,7 +243,7 @@ public func paceStatus(pace: UsagePace?, usedPercent: Double, limitReached: Bool
 /// Degraded-fetch reasons (UsageFetcher's vocabulary) as a headline + next step.
 public func claudeFailureText(_ reason: String) -> (title: String, detail: String?) {
     switch reason {
-    case "no_cookie": return ("No session cookie", "Choose Set Session Cookie… below")
+    case "no_cookie": return ("No session cookie", "Choose Settings → Set Session Cookie…")
     case "no_org_id": return ("Org ID not found", "Re-copy the full cookie from claude.ai")
     case "http_401":  return ("Cookie rejected or expired", "Paste a fresh one from claude.ai")
     case "network":   return ("Network error", "Retrying on the next refresh")

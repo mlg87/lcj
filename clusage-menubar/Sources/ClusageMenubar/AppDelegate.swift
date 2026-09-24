@@ -274,15 +274,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         addRefreshItem(to: menu)
         if showClaudeSection { addOpenURLItem(to: menu, title: "Open Claude Usage", url: Self.claudeUsageURL) }
         if showCodexSection { addOpenURLItem(to: menu, title: "Open Codex Usage", url: Self.codexUsageURL) }
-        menu.addItem(.separator())
-        addRefreshIntervalItem(to: menu)
-        addMenuBarLayoutItem(to: menu)
-        addShowInMenuBarItem(to: menu)
-        if showCodexSection { addCodexColumnItem(to: menu) }
-        if showClaudeSection { addSetCookieItem(to: menu) }
-        addLaunchAtLoginItem(to: menu)
+        // Settings shares this section rather than Quit's: macOS 26 gives Quit
+        // an automatic icon, and an icon indents every item in its section.
+        addSettingsItem(to: menu, showClaude: showClaudeSection, showCodex: showCodexSection)
         menu.addItem(.separator())
         addQuitItem(to: menu)
+    }
+
+    /// Preferences sit one level down so the top level is usage plus actions,
+    /// the split dedicated trackers use: with the cards on top, six preference
+    /// rows at the top level pushed the menu toward the height of a laptop
+    /// screen. Each group keeps its own submenu, so every path is unchanged
+    /// apart from the Settings prefix (Settings → Menu Bar Layout → …).
+    private func addSettingsItem(to menu: NSMenu, showClaude: Bool, showCodex: Bool) {
+        let parent = NSMenuItem(title: "Settings", action: nil, keyEquivalent: "")
+        let submenu = NSMenu()
+        addRefreshIntervalItem(to: submenu)
+        addMenuBarLayoutItem(to: submenu)
+        addShowInMenuBarItem(to: submenu)
+        if showCodex { addCodexColumnItem(to: submenu) }
+        submenu.addItem(.separator())
+        if showClaude { addSetCookieItem(to: submenu) }
+        addLaunchAtLoginItem(to: submenu)
+        parent.submenu = submenu
+        menu.addItem(parent)
     }
 
     // MARK: - Menu helpers
