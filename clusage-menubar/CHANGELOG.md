@@ -5,6 +5,20 @@ All notable changes to clusage-menubar.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0](https://github.com/mlg87/lcj/compare/clusage-menubar-v0.7.0...clusage-menubar-v0.8.0) (2026-09-24)
+
+
+### Features
+
+* **clusage-menubar:** move preferences into a Settings submenu ([2bb61b6](https://github.com/mlg87/lcj/commit/2bb61b698b9db8d64a3e9d01c2894821d85f3696))
+* **clusage-menubar:** redesign the dropdown, add Center Dash layout and a Settings submenu ([d3a8c2e](https://github.com/mlg87/lcj/commit/d3a8c2e87bdbe137ef6baa5c27f3ce8ec096e0fa))
+
+
+### Bug Fixes
+
+* **clusage-menubar:** package the binary swift build just produced ([844efa4](https://github.com/mlg87/lcj/commit/844efa47b120e95e0abe6808f9da0c5035f96484))
+* **clusage-menubar:** package the binary swift build just produced ([f4265d7](https://github.com/mlg87/lcj/commit/f4265d7b615854621690e2e7aec9f00c14993c47))
+
 ## [0.7.0](https://github.com/mlg87/lcj/compare/clusage-menubar-v0.6.0...clusage-menubar-v0.7.0) (2026-09-14)
 
 
